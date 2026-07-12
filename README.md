@@ -22,12 +22,17 @@ The web application and API run as separate Vercel projects from the same monore
 - Email and password authentication with secure, HTTP-only session cookies
 - Workspace-based multi-tenancy and data isolation
 - Create, list, inspect, and delete custom agents
+- Turn a plain-language agent definition into a production prompt with grounding rules, guardrails, escalation boundaries, and an editable final draft
 - Knowledge sources from text, public URLs, PDF, DOCX, TXT, Markdown, and CSV files
 - Ingestion protections for private networks, unsafe redirects, oversized files, and unsupported content
-- Per-agent chunking and lexical retrieval
+- Durable knowledge worker with live progress, retries, leases, versioned content, persisted chunks, activation controls, and detailed job history
+- Per-agent chunking and lexical retrieval that only uses active, ready sources
 - Google ADK agents powered by Gemini or Vertex AI
+- Supervisor-generated evaluation suites built from the agent prompt, active knowledge, and optional questions supplied by the operator
 - Evaluation scenarios, prompt fingerprints, deterministic checks, independent model judging, score dimensions, latency and token tracking
 - Evaluation history, CSV export, cancellation, and AI-assisted prompt review
+- Full conversation and model-call ledger with inputs, outputs, tokens, latency, estimated Google model cost, and the pricing snapshot used for each estimate
+- Workspace and per-agent observability dashboards for traffic, quality, knowledge health, token usage, and estimated spend
 - Responsive web interface with explicit loading, empty, and error states
 - Drizzle migrations and Neon Postgres support
 
@@ -35,7 +40,7 @@ The web application and API run as separate Vercel projects from the same monore
 
 ```text
 apps/web       React + Vite web application
-apps/api       Fastify API, authentication, Google ADK, and eval runner
+apps/api       Fastify API, authentication, Google ADK, worker, telemetry, and eval runner
 packages/db    Drizzle schema, migrations, and PostgreSQL connection
 api/index.ts   Vercel Function entry point
 ```
@@ -44,7 +49,7 @@ Runtime traffic uses Neon's pooled `DATABASE_URL`. Schema migrations use the dir
 
 ## Tech stack
 
-- React, TypeScript, Vite, and Tailwind CSS
+- React, TypeScript, Vite, and a custom responsive design system
 - Fastify and Zod
 - Google ADK for TypeScript
 - PostgreSQL on Neon with Drizzle ORM
@@ -87,6 +92,9 @@ Local services:
 | `GOOGLE_CLOUD_PROJECT` | For Vertex AI | Google Cloud project ID |
 | `GOOGLE_CLOUD_LOCATION` | For Vertex AI | Vertex AI region; defaults to `global` |
 | `EVAL_SUPERVISOR_MODEL` | No | Independent judge model; defaults to `gemini-2.5-pro` |
+| `CRON_SECRET` | Production worker cron | Secret used to authenticate Vercel's knowledge-worker trigger |
+| `WORKER_POLL_MS` | No | Poll interval for the persistent worker; defaults to `1500` ms |
+| `GOOGLE_PRICING_JSON` | No | JSON override for estimated per-million-token model prices |
 | `WEB_ORIGIN` | Yes | Allowed browser origin for CORS |
 | `DATABASE_MAX_CONNECTIONS` | No | Maximum database connections per API instance |
 
@@ -119,7 +127,7 @@ In a third terminal:
 pnpm smoke:local
 ```
 
-The smoke test covers registration, login and logout, tenant isolation, agent CRUD, text and file knowledge ingestion, evaluation scenario creation, and cascade deletion.
+The smoke test covers registration, login and logout, tenant isolation, agent CRUD, prompt generation, asynchronous knowledge ingestion, live job state, knowledge inspection and activation, evaluation generation, the observability ledger, estimated pricing, and cascade deletion.
 
 ## Commands
 
@@ -131,6 +139,7 @@ pnpm audit --prod    # Audit production dependencies
 pnpm db:generate     # Generate a Drizzle migration
 pnpm db:migrate      # Apply pending migrations
 pnpm smoke:local     # Run the HTTP integration smoke test
+pnpm worker          # Run the persistent knowledge worker
 ```
 
 ## Deployment
@@ -140,7 +149,12 @@ Forge uses two Vercel projects:
 1. The web project has `apps/web` as its root directory.
 2. The API project uses the repository root and serves the catch-all Vercel Function in `api/index.ts`.
 3. Connect a Neon resource to the API project and apply migrations using its direct connection URL.
-4. Configure `AUTH_SECRET`, `WEB_ORIGIN`, and the selected Google provider credentials in Vercel.
+4. Configure `AUTH_SECRET`, `WEB_ORIGIN`, `CRON_SECRET`, and the selected Google provider credentials in Vercel.
+5. Request-driven ingestion extends the Vercel Function lifetime so jobs begin immediately. A secured daily cron recovers abandoned work on Hobby deployments; for sustained throughput and fast retries, run `pnpm worker` as a persistent process.
+
+Prompt and eval generation have a deterministic, guardrailed fallback so the authoring workflow remains available without model credentials. Chat, model-judged eval execution, and AI prompt review require Gemini or Vertex AI credentials.
+
+Cost figures are estimates, not invoices. Forge stores the model rates used alongside every call so historical calculations remain auditable when provider pricing changes.
 
 ## Contributing
 

@@ -22,6 +22,13 @@
       "when": 1783880291217,
       "tag": "0002_bright_nova",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1783898800286,
+      "tag": "0003_heavy_payback",
+      "breakpoints": true
     }
   ]
 }

@@ -14,10 +14,15 @@
     "db:generate": "pnpm --filter @forge/db generate",
     "db:migrate": "pnpm --filter @forge/db migrate",
     "db:local": "pglite-server --db=./.local-postgres --port=54329",
-    "smoke:local": "node scripts/smoke-local.mjs"
+    "smoke:local": "node scripts/smoke-local.mjs",
+    "worker": "pnpm --filter @forge/api build && node apps/api/dist/worker.js"
   },
-  "dependencies": { "fastify": "^5.6.1" },
-  "devDependencies": { "@electric-sql/pglite-socket": "^0.1.5" },
+  "dependencies": {
+    "fastify": "^5.6.1"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite-socket": "^0.1.5"
+  },
   "pnpm": {
     "overrides": {
       "@opentelemetry/core": "2.9.0",

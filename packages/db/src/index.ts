@@ -2,7 +2,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from './schema.js';
 
-export { and, desc, eq, inArray } from 'drizzle-orm';
+export { and, asc, count, desc, eq, gte, inArray, isNull, lt, or, sql, sum } from 'drizzle-orm';
 
 let singleton: ReturnType<typeof drizzle<typeof schema>> | undefined;
 export function getDb(url = process.env.DATABASE_URL) {
