@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-labelledby="title">
+  <title id="title">Forge</title>
+  <rect width="48" height="48" rx="12" fill="#20231F"/>
+  <path fill="#F2F3EE" d="M18 8H8v32h10v-6h-4V14h4V8Zm12 0v6h4v20h-4v6h10V8H30Z"/>
+  <path fill="#B8D94A" d="M20 20h8v8h-8z"/>
+</svg>

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 312 64" role="img" aria-labelledby="title description">
+  <title id="title">Forge by NetoLabs</title>
+  <desc id="description">Forge logo with bracketed core symbol</desc>
+  <path fill="#28624A" d="M22 8H8v48h14v-7h-7V15h7V8Zm20 0v7h7v34h-7v7h14V8H42Z"/>
+  <path fill="#B8D94A" d="M26 26h12v12H26z"/>
+  <text x="76" y="40" fill="#20231F" font-family="Manrope,Arial,sans-serif" font-size="34" font-weight="760" letter-spacing="3">FORGE</text>
+  <text x="78" y="56" fill="#6D716A" font-family="Manrope,Arial,sans-serif" font-size="9" font-weight="600" letter-spacing="1.2">BY NETOLABS</text>
+</svg>

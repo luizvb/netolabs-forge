@@ -1,0 +1,32 @@
+const base = process.env.API_URL ?? 'http://127.0.0.1:4010';
+let cookie = '';
+const call = async (path, options = {}) => {
+  const headers = { cookie, ...options.headers }; if (options.body) headers['content-type'] = 'application/json';
+  const response = await fetch(`${base}${path}`, { ...options, headers });
+  const setCookie = response.headers.get('set-cookie'); if (setCookie) cookie = setCookie.split(';')[0];
+  if (!response.ok) throw new Error(`${options.method ?? 'GET'} ${path}: ${response.status} ${await response.text()}`);
+  return response.status === 204 ? null : response.json();
+};
+
+const suffix = Date.now().toString(36);
+const email = `smoke-${suffix}@example.test`; const password = 'correct-horse-battery';
+const registration = await call('/auth/register', { method: 'POST', body: JSON.stringify({ name: 'Smoke User', email, password }) });
+if (!registration.user?.id) throw new Error('Registration did not return a user');
+const session = await call('/auth/me'); if (session.user?.email !== email) throw new Error('Session cookie was not accepted');
+const agent = await call('/agents', { method: 'POST', body: JSON.stringify({ name: 'Knowledge Assistant', description: 'Answers from controlled sources', instructions: 'Answer only from the connected knowledge. Admit when information is unavailable.', model: 'gemini-2.5-flash' }) });
+const source = await call(`/agents/${agent.id}/knowledge`, { method: 'POST', body: JSON.stringify({ type: 'text', title: 'Smoke knowledge', content: 'The support window is Monday through Friday from 09:00 to 18:00.' }) });
+const upload = new FormData(); upload.append('file', new Blob(['Refunds are processed within five business days.'], { type: 'text/plain' }), 'refund-policy.txt');
+const uploadResponse = await fetch(`${base}/agents/${agent.id}/knowledge/upload`, { method: 'POST', headers: { cookie }, body: upload }); if (!uploadResponse.ok) throw new Error(`File upload failed: ${uploadResponse.status} ${await uploadResponse.text()}`); const uploaded = await uploadResponse.json();
+const scenario = await call(`/agents/${agent.id}/evals`, { method: 'POST', body: JSON.stringify({ name: 'Support hours', category: 'grounding', input: 'When is support available?', expectedBehavior: 'State Monday through Friday from 09:00 to 18:00.', assertions: { mustContain: ['Monday', '18:00'], mustNotContain: ['24/7'] } }) });
+const [agents, sources, scenarios] = await Promise.all([call('/agents'), call(`/agents/${agent.id}/knowledge`), call(`/agents/${agent.id}/evals`)]);
+if (!agents.some((item) => item.id === agent.id) || !sources.some((item) => item.id === source.id) || !sources.some((item) => item.id === uploaded.id) || !scenarios.some((item) => item.id === scenario.id)) throw new Error('Created records were not isolated and retrievable');
+const ownerCookie = cookie;
+await call('/auth/register', { method: 'POST', body: JSON.stringify({ name: 'Second Tenant', email: `tenant-${suffix}@example.test`, password }) });
+const isolatedAgents = await call('/agents'); if (isolatedAgents.some((item) => item.id === agent.id)) throw new Error('Agent leaked across workspaces');
+cookie = ownerCookie;
+await call(`/agents/${agent.id}`, { method: 'DELETE' });
+const remaining = await call('/agents'); if (remaining.some((item) => item.id === agent.id)) throw new Error('Agent cascade delete failed');
+await call('/auth/logout', { method: 'POST' });
+const denied = await fetch(`${base}/agents`, { headers: { cookie } }); if (denied.status !== 401) throw new Error(`Logout did not revoke the browser session: ${denied.status}`);
+const login = await call('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }); if (login.user?.email !== email) throw new Error('Login failed after logout');
+console.log(JSON.stringify({ ok: true, registration: true, login: true, logout: true, tenantIsolation: true, agentCrud: true, knowledgeText: true, knowledgeUpload: true, evalScenario: true, cascadeDelete: true }));

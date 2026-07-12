@@ -1,0 +1,29 @@
+{
+  "name": "netolabs-forge",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "license": "MIT",
+  "packageManager": "pnpm@10.20.0",
+  "scripts": {
+    "dev": "pnpm --filter @forge/db build && pnpm --parallel --filter './apps/*' dev",
+    "build": "pnpm -r build",
+    "start:api": "pnpm --filter @forge/api build && node apps/api/dist/server.js",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "db:generate": "pnpm --filter @forge/db generate",
+    "db:migrate": "pnpm --filter @forge/db migrate",
+    "db:local": "pglite-server --db=./.local-postgres --port=54329",
+    "smoke:local": "node scripts/smoke-local.mjs"
+  },
+  "dependencies": { "fastify": "^5.6.1" },
+  "devDependencies": { "@electric-sql/pglite-socket": "^0.1.5" },
+  "pnpm": {
+    "overrides": {
+      "@opentelemetry/core": "2.9.0",
+      "@tootallnate/once": "2.0.1",
+      "tar": "7.5.16",
+      "uuid": "11.1.1"
+    }
+  }
+}
