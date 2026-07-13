@@ -1,4 +1,4 @@
-import { ArrowRight, ChartLineUp, Check, CirclesThreePlus, Database, FlowArrow, ListChecks, ShieldCheck } from '@phosphor-icons/react';
+import { ArrowRight, Brain, ChartLineUp, Check, Database, FlowArrow, PlugsConnected, ShieldCheck } from '@phosphor-icons/react';
 import { Link } from 'react-router-dom';
 import { Brand } from '../ui';
 
@@ -9,43 +9,86 @@ const integrations = [
   ['Intercom', 'https://cdn.simpleicons.org/intercom/20231f'],
   ['Zapier', 'https://cdn.simpleicons.org/zapier/20231f'],
 ] as const;
-const differences = [
-  { icon: FlowArrow, title: 'Opera dentro do seu processo', body: 'O agente consulta CRM, contexto e regras da operação antes de responder ou agir.' },
-  { icon: ShieldCheck, title: 'Sabe quando não responder', body: 'Guardrails e escalonamento humano fazem parte do contrato, não de uma promessa comercial.' },
-  { icon: ChartLineUp, title: 'Qualidade que pode ser provada', body: 'Evals repetíveis medem aderência, segurança e resultado antes e depois da produção.' },
+
+const method = [
+  { icon: PlugsConnected, title: 'Conecta o que já existe', body: 'CRM, conhecimento e canais entram no mesmo fluxo operacional.' },
+  { icon: Brain, title: 'Aprende o seu processo', body: 'Regras, tom, limites e escalonamento viram comportamento testável.' },
+  { icon: ChartLineUp, title: 'Prova antes de escalar', body: 'Evals e observabilidade mostram se o agente está pronto para produção.' },
 ] as const;
 
 export function Landing() {
-  return <main className="landing">
-    <nav className="landing-nav" aria-label="Navegação principal">
+  return <main className="forge-site">
+    <nav className="forge-site-nav" aria-label="Navegação principal">
       <Link to="/"><Brand/></Link>
-      <div className="landing-nav-links"><a href="#integracoes">Integrações</a><a href="#metodo">Como funciona</a><Link to="/auth">Entrar</Link><Link className="button landing-nav-cta" to="/demo">Criar agente <ArrowRight size={16}/></Link></div>
+      <div className="forge-site-links">
+        <a href="#diferenca">Por que Forge</a>
+        <a href="#processo">Como funciona</a>
+        <Link to="/auth">Entrar</Link>
+        <Link className="forge-site-button forge-site-button-small" to="/agents/new">Criar agente <ArrowRight size={16}/></Link>
+      </div>
     </nav>
 
-    <section className="landing-hero">
-      <div className="hero-copy landing-reveal"><p className="landing-eyebrow">IA operacional em até 2 semanas</p><h1>Atendimento que entende. E resolve.</h1><p>Agentes conectados ao seu CRM, testados para a sua operação e prontos para produzir.</p><div className="hero-actions"><Link className="button landing-primary" to="/demo">Criar agente <ArrowRight size={17}/></Link><a className="landing-text-link" href="#metodo">Ver o método</a></div></div>
-      <Link className="hero-product landing-reveal landing-reveal-delay" to="/demo">
-        <div className="hero-product-top"><span>Rascunho operacional</span><span className="hero-state">Pronto para revisar</span></div>
-        <div className="hero-product-body"><div className="hero-product-mark"><CirclesThreePlus size={26}/></div><div><span className="product-label">Objetivo</span><strong>Qualificar leads e atualizar o HubSpot</strong><p>Consulta histórico, responde com contexto e transfere oportunidades sensíveis para uma pessoa.</p></div></div>
-        <div className="hero-contract"><span><Check size={14}/> Grounding obrigatório</span><span><Check size={14}/> Escalonamento humano</span><span><Check size={14}/> Suite de evals</span></div>
-        <div className="hero-product-footer"><span>Experimente sem login</span><ArrowRight size={18}/></div>
-      </Link>
+    <section className="forge-site-hero">
+      <div className="forge-site-hero-copy">
+        <h1>Atendimento que pensa. E resolve.</h1>
+        <div className="forge-site-hero-side">
+          <p>Forge transforma processo, CRM e conhecimento em agentes de IA prontos para operar em até duas semanas.</p>
+          <div><Link className="forge-site-button" to="/agents/new">Criar agente <ArrowRight size={18}/></Link><a className="forge-site-link" href="#processo">Ver como funciona</a></div>
+        </div>
+      </div>
+      <div className="forge-live-product">
+        <div className="forge-live-bar"><span>forge.netolabs.dev/agents/new</span><Link to="/agents/new">Abrir plataforma <ArrowRight size={15}/></Link></div>
+        <div className="forge-live-viewport"><iframe src="/agents/new?embed=1" title="Builder real de agentes do Forge" tabIndex={-1}/><Link className="forge-live-overlay" to="/agents/new" aria-label="Abrir o builder real do Forge"/></div>
+      </div>
     </section>
 
-    <section className="integration-strip" id="integracoes" aria-label="Integrações com plataformas de atendimento e CRM"><p>Conecta com a operação que sua equipe já usa</p><div className="integration-logos">{integrations.map(([name, src]) => <img key={name} src={src} alt={name} loading="lazy"/>)}</div></section>
-
-    <section className="problem-section">
-      <div className="problem-statement"><h2>O gap não é falta de canal.<br/>É falta de contexto.</h2></div>
-      <div className="problem-lines"><article><span>Hoje</span><p>Times copiam dados, consultam sistemas e respondem manualmente.</p></article><article><span>Concorrentes</span><p>Automatizam volume com respostas iguais para operações diferentes.</p></article><article className="problem-forge"><span>Forge</span><p>Modela a dor, conecta as fontes e prova qualidade antes de escalar.</p></article></div>
+    <section className="forge-logo-rail" aria-label="Integrações com CRM e atendimento">
+      {integrations.map(([name, src]) => <img key={name} src={src} alt={name} loading="lazy"/>)}
     </section>
 
-    <section className="difference-section"><header><h2>Personalização é arquitetura.</h2><p>Não é trocar o nome da empresa em um prompt.</p></header><div className="difference-grid">{differences.map(({ icon: Icon, title, body }, index) => <article key={title} className={index === 1 ? 'difference-accent' : ''}><Icon size={29}/><h3>{title}</h3><p>{body}</p></article>)}</div></section>
+    <section className="forge-manifesto" id="diferenca">
+      <p className="forge-site-kicker">O novo padrão de atendimento</p>
+      <h2>Responder rápido ficou barato.<br/>Responder certo continua difícil.</h2>
+      <p>Ferramentas de massa tratam contexto como detalhe. O Forge começa pelo processo, conecta as fontes e testa cada comportamento antes de colocar o agente diante do cliente.</p>
+    </section>
 
-    <section className="method-section" id="metodo"><div className="method-intro"><p className="landing-eyebrow">Do diagnóstico à produção</p><h2>Duas semanas para sair do manual.</h2><p>Um ciclo curto, com critério técnico e operação envolvida desde o primeiro dia.</p></div><div className="method-track"><article><Database size={24}/><h3>Mapear</h3><p>Dor, sistemas, dados e pontos de escalonamento.</p></article><article><FlowArrow size={24}/><h3>Conectar</h3><p>CRM, conhecimento e canais no fluxo real.</p></article><article><ListChecks size={24}/><h3>Avaliar</h3><p>Cenários críticos, guardrails e qualidade mensurável.</p></article><article><ChartLineUp size={24}/><h3>Operar</h3><p>Publicação acompanhada, observabilidade e melhoria contínua.</p></article></div></section>
+    <section className="forge-comparison">
+      <div className="forge-comparison-side forge-comparison-generic">
+        <header><span>Automação de massa</span><h3>Mais conversas.<br/>O mesmo agente.</h3></header>
+        <div><p>Responde sem conhecer a operação.</p><p>Replica um playbook genérico.</p><p>Escala volume antes de provar qualidade.</p></div>
+      </div>
+      <div className="forge-comparison-side forge-comparison-forge">
+        <header><span>Forge</span><h3>Cada empresa.<br/>Um sistema próprio.</h3></header>
+        <div><p><Check size={17}/> Consulta contexto antes de agir.</p><p><Check size={17}/> Respeita regras e limites reais.</p><p><Check size={17}/> Só escala depois dos evals.</p></div>
+      </div>
+    </section>
 
-    <section className="eval-section"><div className="eval-copy"><h2>Produção não é o fim do teste.</h2><p>O Forge registra chamadas, custo, latência e qualidade. Quando o comportamento muda, sua equipe enxerga.</p><Link className="landing-text-link" to="/demo">Testar o builder <ArrowRight size={16}/></Link></div><div className="eval-visual" aria-label="Exemplo de critérios de qualidade monitorados"><div><span>Aderência ao processo</span><strong>Obrigatória</strong></div><div><span>Uso de conhecimento</span><strong>Rastreável</strong></div><div><span>Escalonamento</span><strong>Testado</strong></div><div><span>Operação</span><strong>Observável</strong></div></div></section>
+    <section className="forge-method" id="processo">
+      <div className="forge-method-sticky"><h2>Do CRM à resposta, sem perder o contexto.</h2><p>O Forge entra na operação como infraestrutura, não como mais uma caixa de entrada.</p></div>
+      <div className="forge-method-cards">{method.map(({ icon: Icon, title, body }, index) => <article key={title} className={`forge-method-card forge-method-card-${index + 1}`}><Icon size={34}/><span>{title}</span><p>{body}</p></article>)}</div>
+    </section>
 
-    <section className="landing-cta"><div><h2>Seu primeiro agente começa pela dor.</h2><p>Defina o trabalho agora. Faça login apenas quando estiver pronto para publicar.</p></div><Link className="button landing-cta-button" to="/demo">Criar agente <ArrowRight size={17}/></Link></section>
-    <footer className="landing-footer"><Brand/><p>Agentes de IA que sustentam resultados.</p><a href="https://netolabs.dev" target="_blank" rel="noreferrer">NetoLabs</a></footer>
+    <section className="forge-delivery">
+      <div><p className="forge-site-kicker">Produção em até 2 semanas</p><h2>Curto no calendário.<br/>Rigoroso na entrega.</h2></div>
+      <div className="forge-delivery-track">
+        <article><span>Diagnóstico</span><p>Dor, processo, sistemas e riscos.</p></article>
+        <article><span>Construção</span><p>Agente, integrações e conhecimento.</p></article>
+        <article><span>Validação</span><p>Guardrails, cenários e evals.</p></article>
+        <article><span>Produção</span><p>Publicação, observabilidade e melhoria.</p></article>
+      </div>
+    </section>
+
+    <section className="forge-evals">
+      <div className="forge-evals-copy"><ShieldCheck size={38}/><h2>Se não passa nos evals, não vai para produção.</h2><p>Qualidade não é uma percepção. O Forge transforma comportamento em critérios repetíveis e acompanha o agente depois do lançamento.</p></div>
+      <div className="forge-evals-grid"><div><Database size={22}/><span>Grounding</span><strong>Respostas apoiadas em fontes reais</strong></div><div><ShieldCheck size={22}/><span>Guardrails</span><strong>Limites que resistem a desvios</strong></div><div><FlowArrow size={22}/><span>Escalonamento</span><strong>Humano no momento certo</strong></div><div><ChartLineUp size={22}/><span>Observabilidade</span><strong>Qualidade, custo e latência visíveis</strong></div></div>
+    </section>
+
+    <section className="forge-final-cta">
+      <h2>Comece pelo trabalho.<br/>O login vem depois.</h2>
+      <p>Entre na plataforma, defina o agente e revise o prompt. Sua conta só será solicitada na publicação.</p>
+      <Link className="forge-site-button forge-site-button-light" to="/agents/new">Criar agente <ArrowRight size={18}/></Link>
+    </section>
+
+    <footer className="forge-site-footer"><Brand/><p>Agentes de IA construídos para operações reais.</p><a href="https://netolabs.dev" target="_blank" rel="noreferrer">NetoLabs</a></footer>
   </main>;
 }
