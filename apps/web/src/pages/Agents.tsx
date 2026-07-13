@@ -3,6 +3,7 @@ import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Agent, GeneratedPrompt, api, formatDate } from '../api';
 import { Button, Empty, Field, Notice, Page, Skeleton, StatusBadge, Textarea } from '../ui';
+import { AgentDraft, PENDING_DRAFT_KEY } from './GuestDemo';
 
 function AgentRow({ agent, onDelete }: { agent: Agent; onDelete?: (id: string) => void }) {
   return <div className="agent-row"><Link to={`/agents/${agent.id}`}><span className="agent-glyph"><Robot size={19}/></span><div><strong>{agent.name}</strong><small>{agent.description || 'Sem descrição'}</small></div></Link><StatusBadge value={agent.status}/><time>{formatDate(agent.createdAt)}</time>{onDelete && <button className="icon-button danger" aria-label={`Excluir ${agent.name}`} onClick={() => onDelete(agent.id)}><Trash size={17}/></button>}</div>;
@@ -18,10 +19,12 @@ export function AgentsPage() {
 
 export function NewAgent() {
   const navigate = useNavigate();
-  const [name, setName] = useState(''); const [model, setModel] = useState('gemini-2.5-flash'); const [description, setDescription] = useState('');
-  const [definition, setDefinition] = useState(''); const [guardrailInput, setGuardrailInput] = useState(''); const [instructions, setInstructions] = useState('');
+  const [pendingDraft] = useState<Partial<AgentDraft>>(() => { try { return JSON.parse(sessionStorage.getItem(PENDING_DRAFT_KEY) || '{}'); } catch { return {}; } });
+  const [name, setName] = useState(pendingDraft.name || ''); const [model, setModel] = useState(pendingDraft.model || 'gemini-2.5-flash'); const [description, setDescription] = useState(pendingDraft.description || '');
+  const [definition, setDefinition] = useState(pendingDraft.definition || ''); const [guardrailInput, setGuardrailInput] = useState(pendingDraft.guardrails || ''); const [instructions, setInstructions] = useState(pendingDraft.instructions || '');
   const [generated, setGenerated] = useState<GeneratedPrompt | null>(null); const [error, setError] = useState(''); const [notice, setNotice] = useState('');
   const [generating, setGenerating] = useState(false); const [saving, setSaving] = useState(false);
+  useEffect(() => { sessionStorage.removeItem(PENDING_DRAFT_KEY); }, []);
   const guardrails = guardrailInput.split('\n').map((value) => value.trim()).filter(Boolean);
   const generate = async () => {
     if (definition.trim().length < 20) { setError('Descreva o agente com pelo menos 20 caracteres.'); return; }
@@ -36,6 +39,7 @@ export function NewAgent() {
     event.preventDefault(); setSaving(true); setError('');
     try {
       const agent = await api<Agent>('/agents', { method: 'POST', body: JSON.stringify({ name, model, description, promptDefinition: definition, guardrails, instructions, generatedPrompt: Boolean(generated) }) });
+      sessionStorage.removeItem(PENDING_DRAFT_KEY);
       navigate(`/agents/${agent.id}`);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Falha ao criar agente'); }
     finally { setSaving(false); }
