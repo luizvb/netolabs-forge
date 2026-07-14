@@ -13,6 +13,7 @@ type StripeSubscriptionShape = {
   customer: string | { id: string };
   status: string;
   cancel_at_period_end?: boolean;
+  cancel_at?: number | null;
   current_period_start?: number;
   current_period_end?: number;
   metadata?: Record<string, string>;
@@ -48,6 +49,16 @@ const stripeExpectedLive = () => /^(rk|sk)_live_/.test(process.env.STRIPE_RESTRI
 
 const asDate = (value?: number) => value ? new Date(value * 1_000) : null;
 
+export function stripeSubscriptionCancellationScheduled(
+  subscription: Pick<StripeSubscriptionShape, 'cancel_at_period_end' | 'cancel_at'>,
+  providerCreatedAt: number,
+) {
+  return subscription.cancel_at_period_end === true
+    || (typeof subscription.cancel_at === 'number'
+      && Number.isFinite(subscription.cancel_at)
+      && subscription.cancel_at > providerCreatedAt);
+}
+
 export function normalizedBillingState(input?: { status?: string | null; cancelAtPeriodEnd?: boolean | null; graceUntil?: Date | null }, now = new Date()) {
   if (!input?.status || input.status === 'trial_eligible') return 'free';
   if (input.cancelAtPeriodEnd && ['active', 'trialing'].includes(input.status)) return 'cancel_scheduled';
@@ -68,7 +79,7 @@ export function subscriptionSnapshotFromStripe(subscription: StripeSubscriptionS
     stripeCustomerId: typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id,
     currentPeriodStart: asDate(subscription.current_period_start ?? firstItem?.current_period_start),
     currentPeriodEnd: asDate(subscription.current_period_end ?? firstItem?.current_period_end),
-    cancelAtPeriodEnd: Boolean(subscription.cancel_at_period_end), graceUntil, providerUpdatedAt: new Date(eventCreated * 1_000), updatedAt: new Date(),
+    cancelAtPeriodEnd: stripeSubscriptionCancellationScheduled(subscription, eventCreated), graceUntil, providerUpdatedAt: new Date(eventCreated * 1_000), updatedAt: new Date(),
   };
 }
 

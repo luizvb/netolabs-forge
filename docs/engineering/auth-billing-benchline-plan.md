@@ -185,6 +185,12 @@ Rollback target: current production Git SHAs and Vercel deployments observed dur
 
 Coder exits after implementation-level tests/typecheck/build are recorded here with residual risks. Tester then maps every AC to independent evidence and owns `ready | conditional | blocked`.
 
+## Flexible billing cancellation compatibility — 2026-07-14
+
+- `AC-BILL-FLEX-001`: an `active` or `trialing` Stripe subscription is represented as `cancel_scheduled` when either `cancel_at_period_end=true` or `cancel_at` is a future Unix timestamp relative to the provider event, including API `2026-06-24.dahlia` flexible billing payloads where the Portal leaves `cancel_at_period_end=false`.
+- Minimal slice: normalize both provider representations into the existing persisted `cancelAtPeriodEnd` effective flag, keep paid access through the current period, and add an explicit regression fixture. No schema, dependency, Checkout, Portal, provider configuration or deployment change is required.
+- Status: `completed`; `pnpm --filter @forge/api test -- src/billing.test.ts` passed 43/43, `pnpm typecheck` passed all three workspaces, and `pnpm build` passed the DB/API builds plus the web production build. Rollback is the isolated compatibility commit.
+
 ## Evidence log
 
 - `packages/db/drizzle/0004_normal_misty_knight.sql` and `0005_cultured_quentin_quire.sql` were generated and inspected; both are additive and were not applied.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activeAgentIdsToDisable, normalizedBillingState, revocationWorkspaceForDelivery, shouldApplySubscriptionSnapshot, subscriptionEventForRetry, subscriptionIdFromInvoice, subscriptionSnapshotFromStripe, subscriptionWorkspaceLockKey } from './billing.js';
+import { activeAgentIdsToDisable, normalizedBillingState, revocationWorkspaceForDelivery, shouldApplySubscriptionSnapshot, stripeSubscriptionCancellationScheduled, subscriptionEventForRetry, subscriptionIdFromInvoice, subscriptionSnapshotFromStripe, subscriptionWorkspaceLockKey } from './billing.js';
 
 describe('Stripe entitlement snapshots', () => {
   it('derives a paid snapshot only from server-verified subscription metadata', () => {
@@ -44,6 +44,19 @@ describe('Stripe entitlement snapshots', () => {
     expect(normalizedBillingState({ status: 'past_due', graceUntil: new Date('2026-07-15T12:00:00Z') }, now)).toBe('past_due_grace');
     expect(normalizedBillingState({ status: 'past_due', graceUntil: new Date('2026-07-13T12:00:00Z') }, now)).toBe('past_due_blocked');
     expect(normalizedBillingState({ status: 'canceled' }, now)).toBe('canceled');
+  });
+
+  it('normalizes flexible billing cancel_at as a scheduled cancellation', () => {
+    const eventCreated = 1_752_491_000;
+    const snapshot = subscriptionSnapshotFromStripe({
+      id: 'sub_flexible', customer: 'cus_1', status: 'active',
+      cancel_at_period_end: false, cancel_at: eventCreated + 2_592_000,
+      metadata: { workspaceId: 'workspace-1', planKey: 'studio' },
+    }, eventCreated);
+
+    expect(snapshot.cancelAtPeriodEnd).toBe(true);
+    expect(normalizedBillingState(snapshot, new Date(eventCreated * 1_000))).toBe('cancel_scheduled');
+    expect(stripeSubscriptionCancellationScheduled({ cancel_at_period_end: false, cancel_at: eventCreated - 1 }, eventCreated)).toBe(false);
   });
 
   it('keeps canonical active state for paid and failed invoices delivered out of order or in the same second', () => {
