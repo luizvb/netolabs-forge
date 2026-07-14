@@ -2281,6 +2281,17 @@ aside nav a.active {
 .auth-divider { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 10px; font-weight: 760; letter-spacing: .12em; text-transform: uppercase; }
 .auth-divider:before, .auth-divider:after { content: ""; height: 1px; flex: 1; background: var(--line); }
 .billing-head { align-items: flex-end; }
+.billing-return, .billing-lifecycle { margin-bottom: 16px; padding: 16px 18px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.billing-return { justify-content: flex-start; border-color: #d4b36b; background: #fff7dc; }
+.billing-return > div, .billing-lifecycle > div { min-width: 0; }
+.billing-return strong, .billing-return span, .billing-lifecycle strong, .billing-lifecycle span { display: block; }
+.billing-return strong, .billing-lifecycle strong { font-size: 13px; }
+.billing-return span, .billing-lifecycle span { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.billing-lifecycle.paid { border-color: #91b967; background: #f0f8e7; }
+.billing-lifecycle.pending { border-color: #d4b36b; background: #fff7dc; }
+.billing-lifecycle.attention { border-color: #d79d92; background: #fff0ed; }
+.billing-lifecycle .button { flex: none; white-space: nowrap; }
+.billing-permission { display: block; margin-top: 8px; color: var(--muted); font-size: 11px; text-align: center; }
 .eyebrow { margin: 0 0 8px !important; color: var(--accent) !important; font-size: 10px !important; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
 .current-plan { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); overflow: hidden; }
 .current-plan > div { min-height: 142px; padding: 24px; display: flex; flex-direction: column; justify-content: flex-end; border-right: 1px solid var(--line); }
@@ -2316,6 +2327,8 @@ aside nav a.active {
   .pricing-card { min-height: 330px; }
   .current-plan { grid-template-columns: 1fr; }
   .current-plan > div { min-height: 110px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .billing-lifecycle { align-items: stretch; flex-direction: column; }
+  .billing-lifecycle .button { width: 100%; }
   .benchline-consent, .benchline-connected { align-items: stretch; flex-direction: column; }
   .benchline-connected > div:first-child { align-items: flex-start; flex-direction: column; }
 }

@@ -1,5 +1,13 @@
 # Forge auth, billing and Benchline engineering plan
 
+## Production incident follow-up — 2026-07-14
+
+- `INC-AUTH-001` (`in_progress`): reproduce and isolate the production Google OAuth token rejection reported as `INVALID_NEON_SESSION` without logging credentials or raw tokens.
+- `INC-AUTH-002` (`pending`): implement the smallest safe correction, add a regression test that distinguishes issuer/JWKS/audience/claim failures, and preserve fail-closed production auth.
+- `INC-REL-001` (`pending`): run focused engineering checks, deploy through the existing GitHub/Vercel release path, and execute a real production login smoke.
+- `INC-INT-001` (`pending`): independently reverify Stripe catalog/credentials/webhook/Checkout readiness and the signed Forge–Benchline provision/status/revoke path; report any residual production gate instead of treating partial wiring as complete.
+- Rollback: revert only the incident commit and redeploy the previous known-good production deployment; do not re-enable legacy password auth.
+
 Status: release in progress
 Owner: Main
 Product contract: `docs/product/auth-billing-benchline-brief.md`
@@ -107,9 +115,42 @@ Rollback target: current production Git SHAs and Vercel deployments observed dur
 - Risk: provider configuration and real webhook/OAuth behavior remain unverified until authorized sandbox/live testing.
 - Deferred: Stripe Tax/legal review, reconciliation job, automatic retry worker, advanced dunning UI and additional active-slot sales workflow.
 
+## NetoLabs lifecycle hardening delta - 2026-07-14
+
+Status: `in_progress_local`
+Contract: `/Users/luizneto/Documents/Obsidian Vault/Repositories/netolabs/docs/product/netolabs-saas-billing-standard.md`
+
+Implementation plan:
+
+1. `pending` - reconcile `invoice.paid` and `invoice.payment_failed` through the canonical Stripe subscription, using the existing event receipt and provider-ordering fields so replay and stale delivery cannot duplicate or regress state.
+2. `pending` - replace the cancel-only Portal session with the configured generic account Portal, while preserving owner authorization, stored Customer reuse and the Forge return URL.
+3. `pending` - guard Checkout against an existing active/trialing/past-due/cancel-scheduled subscription and against concurrent/repeated creation attempts; browser input remains a plan key only.
+4. `pending` - complete Billing UI states for pending, active renewal, scheduled cancellation, past-due recovery and canceled/resubscribe, preserving Forge tokens and IA.
+5. `pending` - extend focused API/web tests, typecheck/build, scoped diff and secret scan.
+
+Traceability: `AC-001..013`; provider readback `AC-014` remains a Tester/release gate.
+
+Frontend contract: preserve Forge's operational design system with `variance 3`, `motion 2`, `density 6`; add semantic live status, keyboard-visible actions, responsive wrapping and no new visual dependency.
+
+Migration/rollback: prefer the existing subscription snapshot/event receipt schema. If inspection proves a missing uniqueness invariant, use an additive generated migration but do not apply it. Rollback disables billing configuration and reverts scoped route/UI behavior without deleting snapshots or receipts.
+
 ## Exit criterion and next owner
 
 Coder exits after implementation-level tests/typecheck/build are recorded here with residual risks. Tester then maps every AC to independent evidence and owns `ready | conditional | blocked`.
+
+## Independent QA P1 billing ordering recovery - 2026-07-14
+
+Status: `implemented_local_verification_partial`
+
+1. `completed_local` - remove invoice-event-type status forcing so delayed `invoice.payment_failed` cannot replace a canonical active Stripe subscription with `past_due`, including when event timestamps share the same second.
+2. `completed_local` - add deterministic paid/failed out-of-order and same-second regression coverage around the canonical snapshot boundary and serialize the existing subscription row before applying the tie-break.
+3. `partial_timeout` - run bounded focused tests/typecheck plus scoped diff and credential-pattern scans; no provider, deploy, migration or Git remote operation.
+
+Recovery evidence: the focused Vitest command timed out after 50 seconds with no test diagnostic. The fallback Forge esbuild check was unavailable because this workspace does not expose an esbuild binary. The scoped credential/`payment_method_types` scan completed without a finding; one Git diff invocation emitted a filesystem `mmap` timeout and is not counted as clean diff evidence.
+
+P2 follow-up: webhook reconciliation now acquires the same workspace advisory lock used by Checkout from canonical subscription metadata before attempting the subscription-id row lock/upsert. This serializes the first webhook even when no indexed subscription row exists yet.
+
+Rollback: revert only the scoped canonical snapshot and regression-test changes. Existing event receipts and subscription snapshots remain intact.
 
 ## Evidence log
 

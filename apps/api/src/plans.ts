@@ -45,6 +45,31 @@ export function stripePlanForPriceId(priceId: string, env: NodeJS.ProcessEnv = p
   throw Object.assign(new Error('Stripe subscription uses an unknown price.'), { statusCode: 400, code: 'BILLING_UNKNOWN_PRICE' });
 }
 
+export type StripeCatalogPrice = {
+  id: string;
+  active?: boolean;
+  livemode?: boolean;
+  currency?: string;
+  unit_amount?: number | null;
+  type?: string;
+  recurring?: { interval?: string; interval_count?: number } | null;
+  metadata?: Record<string, string>;
+  product?: string | { deleted?: boolean | void; metadata?: Record<string, string> };
+};
+
+export function forgeCatalogPriceMismatch(plan: PaidPlanKey, currency: BillingCurrency, price: StripeCatalogPrice, expectedLive: boolean, env: NodeJS.ProcessEnv = process.env) {
+  if (price.id !== stripePriceId(plan, currency, env)) return 'identity';
+  if (!price.active) return 'inactive';
+  if (price.livemode !== expectedLive) return 'mode';
+  if (price.currency !== currency) return 'currency';
+  if (price.unit_amount !== PLAN_CATALOG[plan].prices![currency] * 100) return 'amount';
+  if (price.type !== 'recurring' || price.recurring?.interval !== 'month' || price.recurring?.interval_count !== 1) return 'cadence';
+  if (price.metadata?.owner_brand !== 'netolabs' || price.metadata?.product_key !== 'forge' || price.metadata?.package_key !== plan || price.metadata?.entitlement_key !== 'forge_plan_access' || price.metadata?.catalog_version !== '2026-07-14' || price.metadata?.commercial_status !== 'sandbox_hypothesis') return 'metadata';
+  const product = typeof price.product === 'string' ? null : price.product;
+  if (!product || product.deleted || product.metadata?.owner_brand !== 'netolabs' || product.metadata?.product_key !== 'forge') return 'parent';
+  return null;
+}
+
 export function hasPaidAccess(input: { planKey?: string | null; status?: string | null; graceUntil?: Date | null }, now = new Date()) {
   if (!input.planKey || !isPaidPlanKey(input.planKey)) return false;
   if (input.status === 'active' || input.status === 'trialing') return true;
