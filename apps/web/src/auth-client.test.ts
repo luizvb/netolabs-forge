@@ -67,7 +67,7 @@ describe('Neon Auth browser client', () => {
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(String(fetchMock.mock.calls[0][0])).toBe(`${authBaseUrl}/get-session?neon_auth_session_verifier=one%2Btime`);
 
-    finishExchange(jsonResponse({ session: { user: { id: 'user' } } }));
+    finishExchange(jsonResponse({ session: { id: 'session' }, user: { id: 'user' } }));
     await expect(Promise.all([first, second])).resolves.toEqual([token, token]);
 
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
@@ -91,6 +91,24 @@ describe('Neon Auth browser client', () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain('/get-session?neon_auth_session_verifier=expired');
     expect(browser.replaceState).not.toHaveBeenCalled();
     expect(browser.currentUrl().searchParams.get('neon_auth_session_verifier')).toBe('expired');
+  });
+
+  it.each([
+    ['a null session response', () => jsonResponse({ session: null, user: null })],
+    ['a malformed response body', () => new Response('{not-json', { status: 200, headers: { 'content-type': 'application/json' } })],
+  ])('keeps %s fail-closed without verifier cleanup, token request or replay', async (_label, response) => {
+    const browser = installWindow('https://forge.test/auth?neon_auth_session_verifier=invalid-shape&intent=publish');
+    const fetchMock = vi.fn().mockResolvedValue(response());
+    vi.stubGlobal('fetch', fetchMock);
+    const { neonAccessToken } = await loadClient();
+
+    await expect(neonAccessToken()).rejects.toThrow('O Neon Auth não retornou uma sessão válida');
+    await expect(neonAccessToken()).rejects.toThrow('O Neon Auth não retornou uma sessão válida');
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/get-session?neon_auth_session_verifier=invalid-shape');
+    expect(browser.replaceState).not.toHaveBeenCalled();
+    expect(browser.currentUrl().searchParams.get('neon_auth_session_verifier')).toBe('invalid-shape');
   });
 
   it('uses the existing-session token path without a verifier and rejects malformed or absent tokens', async () => {
@@ -156,7 +174,7 @@ describe('Neon Auth browser client', () => {
     const tokenRequest = neonAccessToken();
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     const signOutRequest = signOutNeon();
-    finishExchange(jsonResponse({ session: { user: { id: 'user' } } }));
+    finishExchange(jsonResponse({ session: { id: 'session' }, user: { id: 'user' } }));
 
     await expect(tokenRequest).resolves.toBeNull();
     await signOutRequest;

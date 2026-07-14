@@ -1,6 +1,6 @@
 # Forge auth, billing and Benchline engineering plan
 
-Status: auth incident Tester recovery complete; pending independent retest
+Status: auth incident final Tester recovery complete; pending independent retest
 Owner: Coder
 Product contract: `docs/product/auth-billing-benchline-brief.md`
 Last updated: 2026-07-14
@@ -59,6 +59,16 @@ Provisional independent review found two fail-closed gaps in commit `a8f0df4`:
 Decisions: browser validation is structural and expiration-only, never a substitute for server-side JOSE verification. URL cleanup requires both the original verifier and the initiating auth epoch to remain current. No dependency, provider, schema, environment or remote mutation is needed.
 
 Recovery evidence: focused web run passed 4 files / 17 tests; full `pnpm typecheck`, `pnpm test` (37 API + 17 web) and `pnpm build` passed; `pnpm audit --prod` reported no known vulnerabilities; staged `git diff --check` and the focused secret scan passed immediately before the recovery commit.
+
+### Tester recovery — BUG-AUTH-003 session response contract
+
+Independent retest found that commit `21d90f9` still treated every successful HTTP status from `/get-session` as a consumed callback, even when the response did not satisfy Neon's official session-data contract.
+
+1. `completed` — accept the exchange only when parsed JSON contains non-null object `session` and non-null object `user` fields.
+2. `completed` — make `200 { session: null, user: null }` and malformed `2xx` bodies fail closed, retain the verifier, never call `/token` and cache the rejection to prevent same-page replay.
+3. `completed` — repeat focused/full engineering checks and create a third local traceability commit; no dependency or remote mutation.
+
+BUG-AUTH-003 evidence: focused web run passed 4 files / 19 tests, including deterministic null-session and malformed-body cases; full `pnpm typecheck`, `pnpm test` (37 API + 19 web), `pnpm build` and `pnpm audit --prod` passed. Final staged diff/secret checks run immediately before commit.
 
 ## Observed architecture and constraints
 

@@ -52,6 +52,15 @@ async function authError(response: Response) {
   return new Error(body.message ?? 'Não foi possível concluir a autenticação com o Google.');
 }
 
+function isSessionResponseData(value: unknown) {
+  if (!value || typeof value !== 'object') return false;
+  const data = value as { session?: unknown; user?: unknown };
+  return Boolean(
+    data.session && typeof data.session === 'object' && !Array.isArray(data.session)
+    && data.user && typeof data.user === 'object' && !Array.isArray(data.user),
+  );
+}
+
 function callbackVerifier() {
   if (typeof window === 'undefined') return null;
   const verifier = new URL(window.location.href).searchParams.get(sessionVerifierParam)?.trim();
@@ -75,6 +84,8 @@ async function exchangeCallbackVerifier(epoch: number) {
       const query = new URLSearchParams({ [sessionVerifierParam]: verifier });
       const response = await authRequest(`/get-session?${query.toString()}`);
       if (!response.ok) throw await authError(response);
+      const data = await response.json().catch(() => null);
+      if (!isSessionResponseData(data)) throw new Error('O Neon Auth não retornou uma sessão válida. Tente entrar novamente.');
       if (epoch === authEpoch) removeCallbackVerifier(verifier);
     })();
     callbackExchange = { verifier, promise };
