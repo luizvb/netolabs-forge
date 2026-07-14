@@ -1,15 +1,51 @@
 # Forge auth, billing and Benchline engineering plan
 
-Status: release in progress
-Owner: Main
+Status: auth incident candidate complete; pending independent QA
+Owner: Coder
 Product contract: `docs/product/auth-billing-benchline-brief.md`
-Last updated: 2026-07-13
+Last updated: 2026-07-14
 
 ## Objective and outcome
 
 Implement the smallest local vertical slice that lets a Forge guest preserve an agent draft through Google/Neon Auth, safely provision a Forge identity, subscribe to a server-owned Stripe package, consume trial/paid chat allowance under atomic hard limits, and explicitly link paid workspaces to Benchline through an authenticated S2S contract.
 
 No live provider, database, deployment, commit or release mutation is authorized. Tester owns independent readiness.
+
+## OAuth callback incident — 2026-07-14
+
+Production returns `INVALID_NEON_SESSION` after Google redirects to `/auth` because the dependency-free browser client calls `/token` without first consuming the callback's `neon_auth_session_verifier`. The official Neon Auth flow exchanges that verifier through `/get-session`, then obtains the access token. Reintroducing `@neondatabase/auth@0.4.2-beta` is out of scope because its locked `better-auth@1.4.18` dependency has a critical advisory.
+
+### Incident acceptance and invariants
+
+- `AC-AUTH-005`: when the callback URL contains one non-empty `neon_auth_session_verifier`, the client calls `/get-session?neon_auth_session_verifier=...` exactly once before `/token`.
+- `AC-AUTH-006`: the verifier is removed from the current URL with `history.replaceState`, preserving all other query parameters and the hash, only after a successful exchange and without navigation.
+- `AC-AUTH-007`: a failed exchange does not call `/token`, does not remove the verifier, does not populate the token cache and does not authenticate the Forge API request.
+- `AC-AUTH-008`: an absent verifier keeps the normal existing-session `/token` flow; an invalid or absent token payload remains unauthenticated.
+- `AC-AUTH-009`: sign-out clears both access-token cache and callback-exchange state before contacting Neon; a subsequent callback can be exchanged normally.
+
+### Minimal incident slice
+
+1. `completed` — add a dependency-free, single-flight callback exchange in `apps/web/src/auth-client.ts` before token retrieval.
+2. `completed` — add focused regressions for ordering, exactly-once behavior, URL preservation/cleanup, failure semantics, invalid token payload and sign-out/cache reset.
+3. `completed` — run targeted web tests, full typecheck/test/build, production dependency audit, diff check and secret scan.
+4. `completed` — prepare the isolated candidate for a local commit and immutable-SHA handoff to Tester; no push/deploy/provider mutation.
+
+### Incident decisions and rollback
+
+- D-024: preserve the small HTTP client and add no dependency; use the already configured Neon Auth origin with `credentials: include`.
+- D-025: serialize concurrent token callers behind one callback exchange promise so the one-time verifier cannot be raced or replayed.
+- D-026: retain the verifier after a failed exchange for diagnostics, but cache the rejection so the one-time verifier is not replayed within the same page lifecycle; a reload or new sign-in starts a fresh exchange.
+- Rollback: revert the isolated local commit. No schema, environment, Stripe, Benchline, Neon or deployment state changes are part of this slice.
+
+### Incident engineering evidence
+
+- Focused web run: `pnpm --filter @forge/web test -- src/auth-client.test.ts src/auth-flow.test.ts` passed 4 files / 16 tests, including 4 new callback/cache regressions.
+- `pnpm typecheck` passed for DB, web and API.
+- The first clean-clone `pnpm test` exposed the repository prerequisite that API tests resolve built `@forge/db`; after `pnpm --filter @forge/db build`, the unchanged full command passed 12 API files / 37 tests and 4 web files / 16 tests.
+- `pnpm build` passed for DB, web and API; the Vite production bundle completed successfully.
+- `pnpm audit --prod` returned `No known vulnerabilities found`; no Neon Auth SDK or other dependency was added and the lockfile was unchanged.
+- `git diff --check` passed. A focused secret scan over the changed files found no private keys, Stripe secrets/webhook secrets or credential-bearing PostgreSQL URLs.
+- Residual risk: provider-backed Google/Neon OAuth was not exercised from this local candidate because deploy and remote provider mutation are outside authorization. Tester owns independent validation; a later authorized preview/production smoke must confirm the live cookie/CORS exchange.
 
 ## Observed architecture and constraints
 
