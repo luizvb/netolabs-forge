@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { PLAN_CATALOG, assertAgentCapacity, hasPaidAccess, planForSubscription, publicCatalog, stripePlanForPriceId, stripePriceId } from './plans.js';
+import { PLAN_CATALOG, assertAgentCapacity, forgeCatalogPriceMismatch, hasPaidAccess, planForSubscription, publicCatalog, stripePlanForPriceId, stripePriceId } from './plans.js';
 
 describe('Forge plan policy', () => {
+  it('fails closed on cross-product, mode and catalog Price mismatches', () => {
+    const env = { STRIPE_PRICE_SOLO_BRL: 'price_solo_brl' } as NodeJS.ProcessEnv;
+    const valid = { id: 'price_solo_brl', active: true, livemode: false, currency: 'brl', unit_amount: 14900, type: 'recurring', recurring: { interval: 'month', interval_count: 1 }, metadata: { owner_brand: 'netolabs', product_key: 'forge', package_key: 'solo', entitlement_key: 'forge_plan_access', catalog_version: '2026-07-14', commercial_status: 'approved' }, product: { metadata: { owner_brand: 'netolabs', product_key: 'forge' } } };
+    expect(forgeCatalogPriceMismatch('solo', 'brl', valid, false, env)).toBeNull();
+    expect(forgeCatalogPriceMismatch('solo', 'brl', { ...valid, livemode: true }, false, env)).toBe('mode');
+    expect(forgeCatalogPriceMismatch('solo', 'brl', { ...valid, product: { metadata: { owner_brand: 'netolabs', product_key: 'benchline' } } }, false, env)).toBe('parent');
+    expect(forgeCatalogPriceMismatch('solo', 'brl', { ...valid, metadata: { ...valid.metadata, commercial_status: 'sandbox_hypothesis' } }, false, env)).toBe('metadata');
+  });
   it('keeps the approved plan matrix and trial separate', () => {
     expect(publicCatalog().map((plan) => [plan.key, plan.activeAgentLimit, plan.totalIncludedRequests])).toEqual([
       ['solo', 1, 1_500], ['studio', 3, 4_500], ['scale', 10, 15_000],
