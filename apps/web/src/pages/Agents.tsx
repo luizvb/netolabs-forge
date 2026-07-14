@@ -1,20 +1,20 @@
-import { Copy, MagicWand, Plus, Robot, ShieldCheck, Trash } from '@phosphor-icons/react';
+import { Copy, MagicWand, Plus, Power, Robot, ShieldCheck } from '@phosphor-icons/react';
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Agent, GeneratedPrompt, api, formatDate } from '../api';
 import { AgentDraft, PENDING_DRAFT_KEY, buildDraftPrompt } from '../agent-draft';
 import { Button, Empty, Field, Notice, Page, Skeleton, StatusBadge, Textarea } from '../ui';
 
-function AgentRow({ agent, onDelete }: { agent: Agent; onDelete?: (id: string) => void }) {
-  return <div className="agent-row"><Link to={`/agents/${agent.id}`}><span className="agent-glyph"><Robot size={19}/></span><div><strong>{agent.name}</strong><small>{agent.description || 'Sem descrição'}</small></div></Link><StatusBadge value={agent.status}/><time>{formatDate(agent.createdAt)}</time>{onDelete && <button className="icon-button danger" aria-label={`Excluir ${agent.name}`} onClick={() => onDelete(agent.id)}><Trash size={17}/></button>}</div>;
+function AgentRow({ agent, onToggle }: { agent: Agent; onToggle?: (agent: Agent) => void }) {
+  return <div className="agent-row"><Link to={`/agents/${agent.id}`}><span className="agent-glyph"><Robot size={19}/></span><div><strong>{agent.name}</strong><small>{agent.description || 'Sem descrição'}</small></div></Link><StatusBadge value={agent.status}/><time>{formatDate(agent.createdAt)}</time>{onToggle && <button className={`icon-button${agent.status === 'disabled' ? '' : ' danger'}`} aria-label={`${agent.status === 'disabled' ? 'Ativar' : 'Desativar'} ${agent.name}`} onClick={() => onToggle(agent)}><Power size={17}/></button>}</div>;
 }
 
 export function AgentsPage() {
   const [agents, setAgents] = useState<Agent[] | null>(null); const [error, setError] = useState('');
   const load = useCallback(() => api<Agent[]>('/agents').then(setAgents).catch((reason) => setError(reason.message)), []);
   useEffect(() => { void load(); }, [load]);
-  const remove = async (id: string) => { if (!confirm('Excluir este agente e todos os dados relacionados?')) return; await api(`/agents/${id}`, { method: 'DELETE' }); await load(); };
-  return <Page title="Agentes" subtitle="Configure comportamento, conhecimento, qualidade e operação." action={<Link className="button primary" to="/agents/new"><Plus size={16}/>Novo agente</Link>}>{error && <Notice>{error}</Notice>}{!agents ? <Skeleton/> : agents.length ? <div className="rows agent-list">{agents.map((agent) => <AgentRow key={agent.id} agent={agent} onDelete={remove}/>)}</div> : <Empty icon={<Robot size={28}/>} title="Seu estúdio está vazio" body="Comece por uma definição simples e deixe o Forge estruturar o prompt oficial." action={<Link className="button primary" to="/agents/new">Criar agente</Link>}/>}</Page>;
+  const toggle = async (agent: Agent) => { const active = agent.status === 'disabled'; if (!active && !confirm('Desativar este agente? A definição, o histórico e o consumo serão preservados.')) return; try { await api(`/agents/${agent.id}/status`, { method: 'PATCH', body: JSON.stringify({ active }) }); await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Falha ao alterar o agente'); } };
+  return <Page title="Agentes" subtitle="Configure comportamento, conhecimento, qualidade e operação." action={<Link className="button primary" to="/agents/new"><Plus size={16}/>Novo agente</Link>}>{error && <Notice>{error}</Notice>}{!agents ? <Skeleton/> : agents.length ? <div className="rows agent-list">{agents.map((agent) => <AgentRow key={agent.id} agent={agent} onToggle={toggle}/>)}</div> : <Empty icon={<Robot size={28}/>} title="Seu estúdio está vazio" body="Comece por uma definição simples e deixe o Forge estruturar o prompt oficial." action={<Link className="button primary" to="/agents/new">Criar agente</Link>}/>}</Page>;
 }
 
 export function NewAgent({ guest = false }: { guest?: boolean }) {

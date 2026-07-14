@@ -13,8 +13,13 @@ const timestamps = {
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(), email: text('email').notNull(),
-  name: text('name').notNull(), passwordHash: text('password_hash').notNull(), ...timestamps,
+  name: text('name').notNull(), passwordHash: text('password_hash'), ...timestamps,
 }, (t) => [uniqueIndex('users_email_uq').on(t.email)]);
+
+export const externalIdentities = pgTable('external_identities', {
+  id: uuid('id').primaryKey().defaultRandom(), userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  provider: text('provider').notNull(), issuer: text('issuer').notNull(), subject: text('subject').notNull(), emailAtLink: text('email_at_link'), ...timestamps,
+}, (t) => [uniqueIndex('external_identities_issuer_subject_uq').on(t.issuer, t.subject), index('external_identities_user_idx').on(t.userId)]);
 
 export const workspaces = pgTable('workspaces', {
   id: uuid('id').primaryKey().defaultRandom(), name: text('name').notNull(), slug: text('slug').notNull(), ...timestamps,
@@ -27,12 +32,13 @@ export const memberships = pgTable('memberships', {
 
 export const agents = pgTable('agents', {
   id: uuid('id').primaryKey().defaultRandom(), workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  lineageId: uuid('lineage_id').notNull().defaultRandom(),
   name: text('name').notNull(), slug: text('slug').notNull(), description: text('description').notNull().default(''),
   instructions: text('instructions').notNull(), model: text('model').notNull().default('gemini-2.5-flash'),
   promptDefinition: text('prompt_definition').notNull().default(''), guardrails: jsonb('guardrails').$type<string[]>().notNull().default([]),
   promptVersion: integer('prompt_version').notNull().default(1), promptGeneratedAt: timestamp('prompt_generated_at', { withTimezone: true }),
   status: agentStatus('status').notNull().default('ready'), ...timestamps,
-}, (t) => [uniqueIndex('agents_workspace_slug_uq').on(t.workspaceId, t.slug), index('agents_workspace_idx').on(t.workspaceId)]);
+}, (t) => [uniqueIndex('agents_workspace_slug_uq').on(t.workspaceId, t.slug), uniqueIndex('agents_lineage_uq').on(t.lineageId), index('agents_workspace_idx').on(t.workspaceId)]);
 
 export const conversations = pgTable('conversations', {
   id: uuid('id').primaryKey().defaultRandom(), workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
@@ -97,3 +103,44 @@ export const modelCalls = pgTable('model_calls', {
   pricing: jsonb('pricing').$type<{ inputPerMillion: number; outputPerMillion: number; currency: string; source: string }>().notNull().default({ inputPerMillion: 0, outputPerMillion: 0, currency: 'USD', source: 'unknown' }),
   metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}), ...timestamps,
 }, (t) => [index('model_calls_workspace_idx').on(t.workspaceId, t.createdAt), index('model_calls_agent_idx').on(t.agentId, t.createdAt), index('model_calls_conversation_idx').on(t.conversationId)]);
+
+export const workspaceSubscriptions = pgTable('workspace_subscriptions', {
+  workspaceId: uuid('workspace_id').primaryKey().references(() => workspaces.id, { onDelete: 'cascade' }),
+  planKey: text('plan_key').notNull().default('trial'), status: text('status').notNull().default('trial_eligible'),
+  stripeCustomerId: text('stripe_customer_id'), stripeSubscriptionId: text('stripe_subscription_id'),
+  currentPeriodStart: timestamp('current_period_start', { withTimezone: true }), currentPeriodEnd: timestamp('current_period_end', { withTimezone: true }),
+  cancelAtPeriodEnd: boolean('cancel_at_period_end').notNull().default(false), graceUntil: timestamp('grace_until', { withTimezone: true }),
+  providerUpdatedAt: timestamp('provider_updated_at', { withTimezone: true }), ...timestamps,
+}, (t) => [uniqueIndex('workspace_subscriptions_customer_uq').on(t.stripeCustomerId), uniqueIndex('workspace_subscriptions_subscription_uq').on(t.stripeSubscriptionId)]);
+
+export const stripeEvents = pgTable('stripe_events', {
+  eventId: text('event_id').primaryKey(), type: text('type').notNull(), payloadHash: text('payload_hash').notNull(),
+  providerCreatedAt: timestamp('provider_created_at', { withTimezone: true }).notNull(), processedAt: timestamp('processed_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const agentUsageCounters = pgTable('agent_usage_counters', {
+  lineageId: uuid('lineage_id').primaryKey(), workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'set null' }), trialConsumed: integer('trial_consumed').notNull().default(0),
+  trialReserved: integer('trial_reserved').notNull().default(0), paidConsumed: integer('paid_consumed').notNull().default(0), paidReserved: integer('paid_reserved').notNull().default(0),
+  periodStart: timestamp('period_start', { withTimezone: true }), periodEnd: timestamp('period_end', { withTimezone: true }), ...timestamps,
+}, (t) => [index('agent_usage_workspace_idx').on(t.workspaceId), index('agent_usage_agent_idx').on(t.agentId)]);
+
+export const requestReservations = pgTable('request_reservations', {
+  id: uuid('id').primaryKey().defaultRandom(), idempotencyKey: text('idempotency_key').notNull(), workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'set null' }), lineageId: uuid('lineage_id').notNull(), bucket: text('bucket').notNull(),
+  status: text('status').notNull().default('reserved'), periodStart: timestamp('period_start', { withTimezone: true }), committedAt: timestamp('committed_at', { withTimezone: true }), releasedAt: timestamp('released_at', { withTimezone: true }), ...timestamps,
+}, (t) => [uniqueIndex('request_reservations_workspace_key_uq').on(t.workspaceId, t.idempotencyKey), index('request_reservations_lineage_idx').on(t.lineageId, t.createdAt)]);
+
+export const benchlineConnections = pgTable('benchline_connections', {
+  workspaceId: uuid('workspace_id').primaryKey().references(() => workspaces.id, { onDelete: 'cascade' }), status: text('status').notNull().default('disconnected'),
+  consentVersion: text('consent_version'), consentedBy: uuid('consented_by').references(() => users.id, { onDelete: 'set null' }),
+  consentScopes: jsonb('consent_scopes').$type<string[]>().notNull().default([]), consentedAt: timestamp('consented_at', { withTimezone: true }),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }), remoteWorkspaceId: text('remote_workspace_id'),
+  lastSyncAt: timestamp('last_sync_at', { withTimezone: true }), lastError: text('last_error'), ...timestamps,
+});
+
+export const benchlineAgentMappings = pgTable('benchline_agent_mappings', {
+  id: uuid('id').primaryKey().defaultRandom(), workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  agentId: uuid('agent_id').notNull().references(() => agents.id, { onDelete: 'cascade' }), remoteAgentId: text('remote_agent_id'), remoteTwinId: text('remote_twin_id'),
+  status: text('status').notNull().default('pending'), lastSyncAt: timestamp('last_sync_at', { withTimezone: true }), lastError: text('last_error'), ...timestamps,
+}, (t) => [uniqueIndex('benchline_agent_mappings_agent_uq').on(t.agentId), index('benchline_agent_mappings_workspace_idx').on(t.workspaceId)]);
