@@ -2,6 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const authBaseUrl = 'https://example.neonauth.dev/auth';
 
+function base64UrlJson(value: unknown) {
+  return btoa(JSON.stringify(value)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+
+function syntheticJwt(payload: Record<string, unknown> = {}) {
+  return `${base64UrlJson({ alg: 'RS256', typ: 'JWT' })}.${base64UrlJson({ sub: 'user', exp: Math.floor(Date.now() / 1_000) + 3_600, ...payload })}.signature`;
+}
+
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -42,12 +50,13 @@ describe('Neon Auth browser client', () => {
 
   it('exchanges one callback verifier before requesting one access token and cleans the URL without navigation', async () => {
     const browser = installWindow('https://forge.test/auth?intent=publish&neon_auth_session_verifier=one%2Btime#draft');
+    const token = syntheticJwt();
     let finishExchange!: (response: Response) => void;
     const exchangeResponse = new Promise<Response>((resolve) => { finishExchange = resolve; });
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('/get-session?')) return exchangeResponse;
-      if (url.endsWith('/token')) return Promise.resolve(jsonResponse({ token: 'header.payload.signature' }));
+      if (url.endsWith('/token')) return Promise.resolve(jsonResponse({ token }));
       return Promise.reject(new Error(`Unexpected auth request: ${url}`));
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -59,7 +68,7 @@ describe('Neon Auth browser client', () => {
     expect(String(fetchMock.mock.calls[0][0])).toBe(`${authBaseUrl}/get-session?neon_auth_session_verifier=one%2Btime`);
 
     finishExchange(jsonResponse({ session: { user: { id: 'user' } } }));
-    await expect(Promise.all([first, second])).resolves.toEqual(['header.payload.signature', 'header.payload.signature']);
+    await expect(Promise.all([first, second])).resolves.toEqual([token, token]);
 
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
       `${authBaseUrl}/get-session?neon_auth_session_verifier=one%2Btime`,
@@ -96,28 +105,66 @@ describe('Neon Auth browser client', () => {
     expect(client.tokenFromPayload({})).toBeNull();
     expect(client.tokenFromPayload({ token: '' })).toBeNull();
     expect(client.tokenFromPayload({ token: 'not-a-jwt' })).toBeNull();
+    expect(client.tokenFromPayload({ token: `***.${base64UrlJson({ exp: Math.floor(Date.now() / 1_000) + 60 })}.signature` })).toBeNull();
+    expect(client.tokenFromPayload({ token: `ew.${base64UrlJson({ exp: Math.floor(Date.now() / 1_000) + 60 })}.signature` })).toBeNull();
+    expect(client.tokenFromPayload({ token: `${base64UrlJson('not-an-object')}.${base64UrlJson({ exp: Math.floor(Date.now() / 1_000) + 60 })}.signature` })).toBeNull();
+    expect(client.tokenFromPayload({ token: `${base64UrlJson({ alg: 'RS256' })}.${base64UrlJson([])}.signature` })).toBeNull();
+    expect(client.tokenFromPayload({ token: syntheticJwt({ exp: undefined }) })).toBeNull();
+    expect(client.tokenFromPayload({ token: syntheticJwt({ exp: 'later' }) })).toBeNull();
+    expect(client.tokenFromPayload({ token: syntheticJwt({ exp: Number.MAX_VALUE }) })).toBeNull();
+    expect(client.tokenFromPayload({ token: syntheticJwt({ exp: Math.floor(Date.now() / 1_000) - 1 }) })).toBeNull();
   });
 
   it('serves a valid token from cache and clears the cache on sign-out', async () => {
     installWindow('https://forge.test/auth');
+    const firstToken = syntheticJwt({ tokenVersion: 1 });
+    const secondToken = syntheticJwt({ tokenVersion: 2 });
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse({ token: 'first.payload.signature' }))
+      .mockResolvedValueOnce(jsonResponse({ token: firstToken }))
       .mockResolvedValueOnce(jsonResponse({ ok: true }))
-      .mockResolvedValueOnce(jsonResponse({ token: 'second.payload.signature' }));
+      .mockResolvedValueOnce(jsonResponse({ token: secondToken }));
     vi.stubGlobal('fetch', fetchMock);
     const { neonAccessToken, signOutNeon } = await loadClient();
 
-    await expect(neonAccessToken()).resolves.toBe('first.payload.signature');
-    await expect(neonAccessToken()).resolves.toBe('first.payload.signature');
+    await expect(neonAccessToken()).resolves.toBe(firstToken);
+    await expect(neonAccessToken()).resolves.toBe(firstToken);
     expect(fetchMock).toHaveBeenCalledOnce();
 
     await signOutNeon();
-    await expect(neonAccessToken()).resolves.toBe('second.payload.signature');
+    await expect(neonAccessToken()).resolves.toBe(secondToken);
 
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
       `${authBaseUrl}/token`,
       `${authBaseUrl}/sign-out`,
       `${authBaseUrl}/token`,
     ]);
+  });
+
+  it('does not clean a callback verifier when sign-out invalidates its in-flight exchange', async () => {
+    const browser = installWindow('https://forge.test/auth?intent=publish&neon_auth_session_verifier=in-flight#draft');
+    let finishExchange!: (response: Response) => void;
+    const exchangeResponse = new Promise<Response>((resolve) => { finishExchange = resolve; });
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/get-session?')) return exchangeResponse;
+      if (url.endsWith('/sign-out')) return Promise.resolve(jsonResponse({ ok: true }));
+      return Promise.reject(new Error(`Unexpected auth request: ${url}`));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { neonAccessToken, signOutNeon } = await loadClient();
+
+    const tokenRequest = neonAccessToken();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    const signOutRequest = signOutNeon();
+    finishExchange(jsonResponse({ session: { user: { id: 'user' } } }));
+
+    await expect(tokenRequest).resolves.toBeNull();
+    await signOutRequest;
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
+      `${authBaseUrl}/get-session?neon_auth_session_verifier=in-flight`,
+      `${authBaseUrl}/sign-out`,
+    ]);
+    expect(browser.replaceState).not.toHaveBeenCalled();
+    expect(browser.currentUrl().href).toBe('https://forge.test/auth?intent=publish&neon_auth_session_verifier=in-flight#draft');
   });
 });

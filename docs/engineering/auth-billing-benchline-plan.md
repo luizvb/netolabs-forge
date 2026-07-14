@@ -1,6 +1,6 @@
 # Forge auth, billing and Benchline engineering plan
 
-Status: auth incident candidate complete; pending independent QA
+Status: auth incident Tester recovery complete; pending independent retest
 Owner: Coder
 Product contract: `docs/product/auth-billing-benchline-brief.md`
 Last updated: 2026-07-14
@@ -46,6 +46,19 @@ Production returns `INVALID_NEON_SESSION` after Google redirects to `/auth` beca
 - `pnpm audit --prod` returned `No known vulnerabilities found`; no Neon Auth SDK or other dependency was added and the lockfile was unchanged.
 - `git diff --check` passed. A focused secret scan over the changed files found no private keys, Stripe secrets/webhook secrets or credential-bearing PostgreSQL URLs.
 - Residual risk: provider-backed Google/Neon OAuth was not exercised from this local candidate because deploy and remote provider mutation are outside authorization. Tester owns independent validation; a later authorized preview/production smoke must confirm the live cookie/CORS exchange.
+
+### Tester recovery — token structure and logout race
+
+Provisional independent review found two fail-closed gaps in commit `a8f0df4`:
+
+1. `completed` — require the browser token candidate to be a compact JWT whose header and payload decode from base64url to JSON objects and whose payload has a finite numeric future `exp`; the API remains the trusted signature/claims verifier.
+2. `completed` — bind callback URL cleanup to the auth epoch that initiated `/get-session`, so sign-out invalidation wins deterministically and an obsolete exchange cannot remove the verifier.
+3. `completed` — replace placeholder token strings with structurally valid synthetic JWT fixtures; add malformed JSON/base64, absent/expired/invalid `exp` and exchange-vs-sign-out race regressions.
+4. `completed` — repeat focused tests, typecheck, full tests/build, production audit, diff check and secret scan; create a separate local recovery commit and return to Tester.
+
+Decisions: browser validation is structural and expiration-only, never a substitute for server-side JOSE verification. URL cleanup requires both the original verifier and the initiating auth epoch to remain current. No dependency, provider, schema, environment or remote mutation is needed.
+
+Recovery evidence: focused web run passed 4 files / 17 tests; full `pnpm typecheck`, `pnpm test` (37 API + 17 web) and `pnpm build` passed; `pnpm audit --prod` reported no known vulnerabilities; staged `git diff --check` and the focused secret scan passed immediately before the recovery commit.
 
 ## Observed architecture and constraints
 

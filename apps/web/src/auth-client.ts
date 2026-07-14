@@ -10,20 +10,32 @@ const sessionVerifierParam = 'neon_auth_session_verifier';
 
 export const authUrlForPath = (baseUrl: string, path: string) => `${baseUrl.replace(/\/$/, '')}/${path.replace(/^\//, '')}`;
 
+function jsonObjectFromBase64Url(segment: string) {
+  if (!/^[A-Za-z0-9_-]+$/.test(segment)) return null;
+  try {
+    const base64 = segment.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(segment.length / 4) * 4, '=');
+    const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+    const value = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+function tokenExpiresAt(token: string) {
+  const segments = token.split('.');
+  if (segments.length !== 3 || !segments[2] || !/^[A-Za-z0-9_-]+$/.test(segments[2])) return null;
+  const header = jsonObjectFromBase64Url(segments[0]);
+  const payload = jsonObjectFromBase64Url(segments[1]);
+  if (!header || !payload || typeof payload.exp !== 'number' || !Number.isFinite(payload.exp)) return null;
+  const expiresAt = payload.exp * 1_000;
+  return Number.isFinite(expiresAt) && expiresAt > Date.now() ? expiresAt : null;
+}
+
 export function tokenFromPayload(payload: unknown) {
   if (!payload || typeof payload !== 'object' || !('token' in payload) || typeof payload.token !== 'string') return null;
   const token = payload.token.trim();
-  const segments = token.split('.');
-  return segments.length === 3 && segments.every((segment) => /^[A-Za-z0-9_-]+$/.test(segment)) ? token : null;
-}
-
-function tokenExpiry(token: string) {
-  try {
-    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))) as { exp?: number };
-    return typeof payload.exp === 'number' ? payload.exp * 1_000 : Date.now() + 60_000;
-  } catch {
-    return Date.now() + 60_000;
-  }
+  return tokenExpiresAt(token) ? token : null;
 }
 
 async function authRequest(path: string, init?: RequestInit) {
@@ -53,7 +65,7 @@ function removeCallbackVerifier(verifier: string) {
   window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
 }
 
-async function exchangeCallbackVerifier() {
+async function exchangeCallbackVerifier(epoch: number) {
   const verifier = callbackVerifier();
   if (!verifier) return;
 
@@ -63,7 +75,7 @@ async function exchangeCallbackVerifier() {
       const query = new URLSearchParams({ [sessionVerifierParam]: verifier });
       const response = await authRequest(`/get-session?${query.toString()}`);
       if (!response.ok) throw await authError(response);
-      removeCallbackVerifier(verifier);
+      if (epoch === authEpoch) removeCallbackVerifier(verifier);
     })();
     callbackExchange = { verifier, promise };
   }
@@ -77,14 +89,15 @@ async function requestAccessToken(epoch: number) {
   if (!response.ok) throw await authError(response);
   const token = tokenFromPayload(await response.json().catch(() => null));
   if (epoch !== authEpoch) return null;
-  cachedAccessToken = token ? { value: token, expiresAt: tokenExpiry(token) } : null;
-  return token;
+  const expiresAt = token ? tokenExpiresAt(token) : null;
+  cachedAccessToken = token && expiresAt ? { value: token, expiresAt } : null;
+  return expiresAt ? token : null;
 }
 
 export async function neonAccessToken() {
   if (!neonAuthUrl) return null;
   const epoch = authEpoch;
-  await exchangeCallbackVerifier();
+  await exchangeCallbackVerifier(epoch);
   if (epoch !== authEpoch) return null;
   if (cachedAccessToken && cachedAccessToken.expiresAt - 30_000 > Date.now()) return cachedAccessToken.value;
   if (!accessTokenRequest || accessTokenRequest.epoch !== epoch) {
