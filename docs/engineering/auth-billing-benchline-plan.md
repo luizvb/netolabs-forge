@@ -1,7 +1,7 @@
 # Forge auth, billing and Benchline engineering plan
 
-Status: auth incident final Tester recovery complete; pending independent retest
-Owner: Coder
+Status: auth incident completed; Stripe live integration blocked by missing runtime credentials and webhook
+Owner: Main
 Product contract: `docs/product/auth-billing-benchline-brief.md`
 Last updated: 2026-07-14
 
@@ -9,7 +9,7 @@ Last updated: 2026-07-14
 
 Implement the smallest local vertical slice that lets a Forge guest preserve an agent draft through Google/Neon Auth, safely provision a Forge identity, subscribe to a server-owned Stripe package, consume trial/paid chat allowance under atomic hard limits, and explicitly link paid workspaces to Benchline through an authenticated S2S contract.
 
-No live provider, database, deployment, commit or release mutation is authorized. Tester owns independent readiness.
+Production mutations remain limited to the explicitly authorized incident fix and must keep legacy auth fail-closed. Tester owns independent readiness.
 
 ## OAuth callback incident — 2026-07-14
 
@@ -69,6 +69,21 @@ Independent retest found that commit `21d90f9` still treated every successful HT
 3. `completed` — repeat focused/full engineering checks and create a third local traceability commit; no dependency or remote mutation.
 
 BUG-AUTH-003 evidence: focused web run passed 4 files / 19 tests, including deterministic null-session and malformed-body cases; full `pnpm typecheck`, `pnpm test` (37 API + 19 web), `pnpm build` and `pnpm audit --prod` passed. Final staged diff/secret checks run immediately before commit.
+
+### Production provider validation — issuer configuration
+
+The client hotfix was merged as PR #3 (`main=3a62e6e`) and deployed to the production web alias. Provider-backed smoke confirmed `sign-in/social -> get-session -> token` all return HTTP 200 and the verifier is consumed, but `GET /api/auth/me` still returns 401 `INVALID_NEON_SESSION`.
+
+Sanitized JWT inspection shows the live token issuer and audience are the Neon branch origin (`https://<endpoint>.neonauth.sa-east-1.aws.neon.tech`), while Vercel Production pins `NEON_AUTH_ISSUER` to the Auth API base path ending in `/neondb/auth`. The configured JWKS path is correct and exposes the same `kid` used by the live EdDSA token. The remaining incident is therefore an exact issuer mismatch, not a callback, cookie, CORS, key or Google OAuth failure.
+
+1. `completed` — replace only `NEON_AUTH_ISSUER` in `netolabs-forge-api` Production with the exact issuer claim; preserve the existing JWKS URL and leave `NEON_AUTH_AUDIENCE` unset.
+2. `completed` — trigger a fresh API production deployment so the serverless runtime captures the new environment value.
+3. `completed` — repeat Google OAuth and require `/api/auth/me` 200 plus an authenticated dashboard state; then exercise billing status and record the separate Stripe operational blocker.
+4. `completed` — update QA/run evidence and mark the auth incident complete after the provider-backed smoke passes.
+
+Production evidence: web deployment `dpl_BLpiEBXfW7gNmapgC72dhsfxXTYv` and API redeployment `dpl_FDscMTLyrvjV3AW8UPPwygunugUt` are `READY`. A fresh browser session returned `/token` 200 and `/api/auth/me` 200, removed the callback verifier and rendered the authenticated Forge dashboard. Billing catalog/status both returned 200. The authenticated Solo checkout returned 503 `Stripe is not configured`, matching the independent inventory: zero Forge Products/webhooks live and no runtime Stripe key or webhook secret. Benchline remains separately operational through its signed S2S boundary.
+
+Rollback: restore the previous issuer value and redeploy the API. This change touches no database row, schema, OAuth credential, JWKS location, Stripe configuration or Benchline configuration.
 
 ## Observed architecture and constraints
 
