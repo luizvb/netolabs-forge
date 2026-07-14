@@ -1,23 +1,28 @@
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
+import rawBody from 'fastify-raw-body';
 import { waitUntil } from '@vercel/functions';
 import Fastify from 'fastify';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { agents, and, conversations, desc, eq, evalBatches, evalRuns, evalScenarios, getDb, gte, inArray, knowledgeChunks, knowledgeJobs, knowledgeSources, memberships, modelCalls, sql, users, workspaces } from '@forge/db';
-import { createToken, hashPassword, requireAuth, verifyPassword } from './auth.js';
+import { assertLegacyAuthAllowed, createToken, hashPassword, requireAuth, verifyPassword } from './auth.js';
 import { judgeResponse, reviewPrompt, runAgent } from './adk.js';
 import { aggregateEvalRuns, buildEvalCsv, promptFingerprint, runDeterministicChecks } from './evals.js';
 import { extractFileText } from './knowledge.js';
 import { drainKnowledgeJobs, enqueueKnowledgeJob } from './knowledge-worker.js';
 import { recordModelCall } from './observability.js';
 import { generateEvalScenarios, generateOfficialPrompt } from './supervisor.js';
+import { createAgentWithCapacity, reserveAgentRequest, setAgentActivation, settleAgentRequest, shouldReleaseFailedRequest, workspaceUsage } from './entitlements.js';
+import { registerBillingRoutes } from './billing.js';
+import { registerBenchlineRoutes, syncBenchlineAfterAgentChange } from './benchline.js';
 
 const app = Fastify({ logger: true });
 await app.register(cookie);
 await app.register(cors, { origin: process.env.WEB_ORIGIN ?? 'http://localhost:5173', credentials: true });
 await app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024, files: 1, fields: 4 } });
+await app.register(rawBody, { field: 'rawBody', global: false, encoding: false, runFirst: true });
 const db = getDb();
 const credentials = z.object({ email: z.string().email(), password: z.string().min(8), name: z.string().min(2).optional() });
 const slugify = (value: string) => value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 48);
@@ -91,6 +96,7 @@ async function processEvalBatch(batchId: string, agent: typeof agents.$inferSele
 
 app.get('/health', async () => ({ ok: true }));
 app.post('/auth/register', async (request, reply) => {
+  assertLegacyAuthAllowed();
   const input = credentials.extend({ name: z.string().min(2) }).parse(request.body);
   const existing = await db.select({ id: users.id }).from(users).where(eq(users.email, input.email.toLowerCase())).limit(1);
   if (existing.length) return reply.code(409).send({ message: 'Email already registered' });
@@ -105,6 +111,7 @@ app.post('/auth/register', async (request, reply) => {
   return { user: { id: result.user.id, name: result.user.name, email: result.user.email }, workspace: result.workspace };
 });
 app.post('/auth/login', async (request, reply) => {
+  assertLegacyAuthAllowed();
   const input = credentials.pick({ email: true, password: true }).parse(request.body);
   const [row] = await db.select({ user: users, membership: memberships }).from(users).innerJoin(memberships, eq(memberships.userId, users.id)).where(eq(users.email, input.email.toLowerCase())).limit(1);
   if (!row || !(await verifyPassword(input.password, row.user.passwordHash))) return reply.code(401).send({ message: 'Invalid email or password' });
@@ -132,11 +139,13 @@ app.get('/agents', async (request) => { const auth = await requireAuth(request);
 app.post('/agents', async (request, reply) => {
   const auth = await requireAuth(request);
   const input = z.object({ name: z.string().min(2), description: z.string().max(240).default(''), instructions: z.string().min(20), model: z.string().default('gemini-2.5-flash'), promptDefinition: z.string().max(12_000).default(''), guardrails: z.array(z.string().max(500)).max(20).default([]), generatedPrompt: z.boolean().default(false) }).parse(request.body);
-  const [agent] = await db.insert(agents).values({ name: input.name, description: input.description, instructions: input.instructions, model: input.model, promptDefinition: input.promptDefinition, guardrails: input.guardrails, promptGeneratedAt: input.generatedPrompt ? new Date() : null, workspaceId: auth.workspaceId, slug: `${slugify(input.name)}-${crypto.randomUUID().slice(0, 6)}` }).returning();
-  return reply.code(201).send(agent);
+  const result = await createAgentWithCapacity(auth.workspaceId, { name: input.name, description: input.description, instructions: input.instructions, model: input.model, promptDefinition: input.promptDefinition, guardrails: input.guardrails, promptGeneratedAt: input.generatedPrompt ? new Date() : null, slug: `${slugify(input.name)}-${crypto.randomUUID().slice(0, 6)}` });
+  await syncBenchlineAfterAgentChange(auth.workspaceId);
+  return reply.code(201).send({ ...result.agent, storedInactive: result.storedInactive });
 });
 app.get('/agents/:id', async (request) => { const auth = await requireAuth(request); return ownedAgent(z.object({ id: z.string().uuid() }).parse(request.params).id, auth.workspaceId); });
-app.delete('/agents/:id', async (request, reply) => { const auth = await requireAuth(request); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; await ownedAgent(id, auth.workspaceId); await db.delete(agents).where(eq(agents.id, id)); return reply.code(204).send(); });
+app.patch('/agents/:id/status', async (request) => { const auth = await requireAuth(request); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; const body = z.object({ active: z.boolean() }).parse(request.body); const result = await setAgentActivation(auth.workspaceId, id, body.active); await syncBenchlineAfterAgentChange(auth.workspaceId); return result; });
+app.delete('/agents/:id', async (request, reply) => { const auth = await requireAuth(request); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; await ownedAgent(id, auth.workspaceId); await db.update(agents).set({ status: 'disabled', updatedAt: new Date() }).where(and(eq(agents.id, id), eq(agents.workspaceId, auth.workspaceId))); await syncBenchlineAfterAgentChange(auth.workspaceId); return reply.code(204).send(); });
 
 app.get('/agents/:id/knowledge', async (request) => {
   const auth = await requireAuth(request); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; await ownedAgent(id, auth.workspaceId);
@@ -188,7 +197,7 @@ app.get('/internal/worker', async (request, reply) => {
 
 app.post('/agents/:id/chat', async (request) => {
   const auth = await requireAuth(request); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; const agent = await ownedAgent(id, auth.workspaceId);
-  const body = z.object({ message: z.string().min(1).max(12_000), conversationId: z.string().uuid().optional() }).parse(request.body);
+  const body = z.object({ message: z.string().min(1).max(12_000), conversationId: z.string().uuid().optional(), requestId: z.string().min(8).max(120).optional() }).parse(request.body);
   let conversationId = body.conversationId;
   if (conversationId) {
     const [conversation] = await db.select({ id: conversations.id }).from(conversations).where(and(eq(conversations.id, conversationId), eq(conversations.agentId, id), eq(conversations.workspaceId, auth.workspaceId))).limit(1);
@@ -197,17 +206,23 @@ app.post('/agents/:id/chat', async (request) => {
     const [conversation] = await db.insert(conversations).values({ workspaceId: auth.workspaceId, agentId: id, userId: auth.userId, title: body.message.trim().slice(0, 80) }).returning();
     conversationId = conversation.id;
   }
+  const reservation = await reserveAgentRequest({ workspaceId: auth.workspaceId, agentId: id, idempotencyKey: body.requestId });
+  if (reservation.reused) throw Object.assign(new Error('Esta execução já foi recebida. Gere uma nova chave para uma nova requisição.'), { statusCode: 409, code: 'DUPLICATE_CHAT_REQUEST' });
   const started = Date.now();
   try {
     const result = await runAgent(agent, body.message, await knowledgeFor(id, body.message));
+    await settleAgentRequest(reservation.id, 'commit');
     const call = await recordModelCall({ workspaceId: auth.workspaceId, agentId: id, conversationId, kind: 'chat', model: agent.model, request: body.message, response: result.text, usage: result.usage, latencyMs: Date.now() - started });
     await db.update(conversations).set({ updatedAt: new Date() }).where(eq(conversations.id, conversationId));
     return { response: result.text, usage: result.usage, conversationId, callId: call.id, estimatedCostUsd: call.estimatedCostUsd, latencyMs: call.latencyMs };
   } catch (error) {
+    await settleAgentRequest(reservation.id, shouldReleaseFailedRequest(error) ? 'release' : 'commit');
     await recordModelCall({ workspaceId: auth.workspaceId, agentId: id, conversationId, kind: 'chat', model: agent.model, status: 'failed', request: body.message, latencyMs: Date.now() - started, error: error instanceof Error ? error.message : 'Agent call failed' });
     throw error;
   }
 });
+
+app.get('/usage', async (request) => { const auth = await requireAuth(request); return workspaceUsage(auth.workspaceId); });
 
 app.get('/agents/:id/evals', async (request) => { const auth = await requireAuth(request); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; await ownedAgent(id, auth.workspaceId); const scenarios = await db.select().from(evalScenarios).where(eq(evalScenarios.agentId, id)).orderBy(desc(evalScenarios.createdAt)); const runs = scenarios.length ? await db.select().from(evalRuns).where(inArray(evalRuns.scenarioId, scenarios.map((x) => x.id))).orderBy(desc(evalRuns.createdAt)) : []; return scenarios.map((scenario) => ({ ...scenario, latest: runs.find((run) => run.scenarioId === scenario.id) ?? null })); });
 app.post('/agents/:id/evals/generate', async (request, reply) => {
@@ -345,12 +360,21 @@ app.get('/analytics/calls/:callId', async (request) => {
   return call;
 });
 
+registerBillingRoutes(app);
+registerBenchlineRoutes(app);
+
 app.setErrorHandler((error, request, reply) => {
   const err = error instanceof Error ? error : new Error('Unknown error');
-  const statusCode = (err as Error & { statusCode?: number }).statusCode;
+  const structured = err as Error & { statusCode?: number; code?: string; details?: Record<string, unknown> };
+  const statusCode = structured.statusCode;
   const code = typeof statusCode === 'number' ? statusCode : err instanceof z.ZodError ? 400 : 500;
   if (code >= 500) request.log.error({ err }, 'request failed');
-  reply.code(code).send({ message: code === 500 ? 'Unexpected server error' : err instanceof z.ZodError ? err.issues[0]?.message ?? 'Invalid request' : err.message, issues: err instanceof z.ZodError ? err.issues : undefined });
+  reply.code(code).send({
+    message: code === 500 ? 'Unexpected server error' : err instanceof z.ZodError ? err.issues[0]?.message ?? 'Invalid request' : err.message,
+    code: code < 500 ? structured.code : undefined,
+    details: code < 500 ? structured.details : undefined,
+    issues: err instanceof z.ZodError ? err.issues : undefined,
+  });
 });
 export default app;
 

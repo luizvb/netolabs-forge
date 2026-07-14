@@ -11,7 +11,7 @@ export function hasGoogleCredentials(env = process.env) {
 }
 
 function assertGoogleCredentials() {
-  if (!hasGoogleCredentials()) throw Object.assign(new Error('Configure GOOGLE_API_KEY or Vertex AI credentials to run agents'), { statusCode: 503 });
+  if (!hasGoogleCredentials()) throw Object.assign(new Error('Configure GOOGLE_API_KEY or Vertex AI credentials to run agents'), { statusCode: 503, code: 'MODEL_NOT_CONFIGURED' });
 }
 
 function assertSuccessfulEvent(event: { errorCode?: string; errorMessage?: string }) {

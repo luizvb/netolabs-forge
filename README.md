@@ -19,7 +19,7 @@ The web application and API run as separate Vercel projects from the same monore
 
 ## Features
 
-- Email and password authentication with secure, HTTP-only session cookies
+- Google authentication through Neon Auth, with issuer/subject identity provisioning and a controlled legacy local fallback
 - Workspace-based multi-tenancy and data isolation
 - Create, list, inspect, and delete custom agents
 - Turn a plain-language agent definition into a production prompt with grounding rules, guardrails, escalation boundaries, and an editable final draft
@@ -33,6 +33,9 @@ The web application and API run as separate Vercel projects from the same monore
 - Evaluation history, CSV export, cancellation, and AI-assisted prompt review
 - Full conversation and model-call ledger with inputs, outputs, tokens, latency, estimated Google model cost, and the pricing snapshot used for each estimate
 - Workspace and per-agent observability dashboards for traffic, quality, knowledge health, token usage, and estimated spend
+- Stripe subscriptions for Solo, Studio and Scale, with signed idempotent webhooks, Customer Portal and server-owned price IDs
+- 30 lifetime test executions per agent lineage followed by an atomic 1,500-request monthly allowance per active paid agent
+- Explicit, versioned Forge-to-Benchline consent with signed synchronization and free bundled eval entitlements
 - Responsive web interface with explicit loading, empty, and error states
 - Drizzle migrations and Neon Postgres support
 
@@ -87,6 +90,17 @@ Local services:
 | `DATABASE_URL` | Yes | Pooled PostgreSQL URL used by the API |
 | `DIRECT_URL` | Yes for migrations | Direct PostgreSQL URL used by Drizzle migrations |
 | `AUTH_SECRET` | Yes | Random session-signing secret with at least 32 characters |
+| `NEON_AUTH_ISSUER` | Production auth | Expected Neon Auth JWT issuer |
+| `NEON_AUTH_JWKS_URL` | Production auth | Neon Auth remote JWKS URL used by the API |
+| `NEON_AUTH_AUDIENCE` | If configured in Neon | Expected JWT audience |
+| `VITE_NEON_AUTH_URL` | Web Google auth | Public Neon Auth endpoint used by the browser SDK |
+| `ALLOW_LEGACY_AUTH` / `VITE_ALLOW_LEGACY_AUTH` | No | Explicit migration-only password fallback; keep `false` in production |
+| `STRIPE_SECRET_KEY` | Billing | Server-side Stripe key; prefer a restricted key |
+| `STRIPE_WEBHOOK_SECRET` | Billing | Signing secret for `/billing/webhook` |
+| `STRIPE_PRICE_{PLAN}_{CURRENCY}` | Billing | Server-owned recurring Price IDs for Solo, Studio and Scale in BRL/USD |
+| `BILLING_GRACE_DAYS` | No | Bounded past-due grace period; defaults to 3 days |
+| `BENCHLINE_API_URL` | Benchline bundle | Base URL of the Benchline partner API |
+| `BENCHLINE_S2S_SECRET` | Benchline bundle | Shared HMAC secret; configure the same value in Benchline through a secret manager |
 | `GOOGLE_API_KEY` | For Gemini | Google AI API key used by agent and judge calls |
 | `GOOGLE_GENAI_USE_VERTEXAI` | For Vertex AI | Set to `true` to use Vertex AI instead of an API key |
 | `GOOGLE_CLOUD_PROJECT` | For Vertex AI | Google Cloud project ID |
@@ -148,9 +162,13 @@ Forge uses two Vercel projects:
 
 1. The web project has `apps/web` as its root directory.
 2. The API project uses the repository root and serves the catch-all Vercel Function in `api/index.ts`.
-3. Connect a Neon resource to the API project and apply migrations using its direct connection URL.
-4. Configure `AUTH_SECRET`, `WEB_ORIGIN`, `CRON_SECRET`, and the selected Google provider credentials in Vercel.
-5. Request-driven ingestion extends the Vercel Function lifetime so jobs begin immediately. A secured daily cron recovers abandoned work on Hobby deployments; for sustained throughput and fast retries, run `pnpm worker` as a persistent process.
+3. Rehearse additive migrations on an isolated Neon branch, then apply them using its direct connection URL.
+4. Configure Neon Auth with Google credentials and trusted production/callback domains. Configure the JWT issuer/JWKS values in the API and `VITE_NEON_AUTH_URL` in the web project.
+5. Create recurring Stripe Prices for the six plan/currency keys, configure the signed webhook and Customer Portal, then inject only their IDs and server secrets.
+6. Deploy the Benchline partner migration/API with the shared HMAC secret before enabling `BENCHLINE_API_URL` in Forge.
+7. Request-driven ingestion extends the Vercel Function lifetime so jobs begin immediately. A secured daily cron recovers abandoned work on Hobby deployments; for sustained throughput and fast retries, run `pnpm worker` as a persistent process.
+
+Checkout redirects never grant product access. Forge activates or changes a plan only after processing a verified Stripe subscription webhook. The implementation has no automatic overage: limits stop execution until renewal or an explicit plan change.
 
 Prompt and eval generation have a deterministic, guardrailed fallback so the authoring workflow remains available without model credentials. Chat, model-judged eval execution, and AI prompt review require Gemini or Vertex AI credentials.
 

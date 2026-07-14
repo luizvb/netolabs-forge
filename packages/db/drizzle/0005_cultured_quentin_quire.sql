@@ -1,0 +1,1 @@
+ALTER TABLE "benchline_connections" ADD COLUMN "consent_scopes" jsonb DEFAULT '[]'::jsonb NOT NULL;

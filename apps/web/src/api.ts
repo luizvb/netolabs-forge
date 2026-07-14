@@ -44,6 +44,8 @@ export type GeneratedPrompt = { instructions: string; summary: string; guardrail
 
 export const api = async <T,>(path: string, init?: RequestInit): Promise<T> => {
   const headers: Record<string, string> = { ...(init?.headers as Record<string, string> || {}) };
+  const token = await neonAccessToken();
+  if (token) headers.authorization = `Bearer ${token}`;
   if (init?.body) headers['content-type'] = 'application/json';
   const response = await fetch(`/api${path}`, { ...init, credentials: 'include', headers });
   if (!response.ok) {
@@ -54,7 +56,8 @@ export const api = async <T,>(path: string, init?: RequestInit): Promise<T> => {
 };
 
 export const apiForm = async <T,>(path: string, body: FormData): Promise<T> => {
-  const response = await fetch(`/api${path}`, { method: 'POST', credentials: 'include', body });
+  const token = await neonAccessToken();
+  const response = await fetch(`/api${path}`, { method: 'POST', credentials: 'include', body, headers: token ? { authorization: `Bearer ${token}` } : undefined });
   if (!response.ok) {
     const value = await response.json().catch(() => ({}));
     throw new Error(value.message ?? 'Não foi possível enviar o arquivo.');
@@ -67,3 +70,4 @@ export const formatDateTime = (value?: string | null) => value ? new Intl.DateTi
 export const formatMoney = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: value < 0.01 ? 4 : 2, maximumFractionDigits: value < 0.01 ? 6 : 2 }).format(value);
 export const formatTokens = (value: number) => value >= 1_000_000 ? `${(value / 1_000_000).toFixed(2)}M` : value >= 1_000 ? `${(value / 1_000).toFixed(1)}k` : String(value);
 export const formatDuration = (value: number) => value >= 1_000 ? `${(value / 1_000).toFixed(2)}s` : `${value}ms`;
+import { neonAccessToken } from './auth-client';
