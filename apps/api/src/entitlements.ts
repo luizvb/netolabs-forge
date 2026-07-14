@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { agentUsageCounters, agents, and, eq, getDb, requestReservations, sql, workspaceSubscriptions } from '@forge/db';
+import { agentUsageCounters, agents, and, asc, eq, getDb, inArray, requestReservations, sql, workspaceSubscriptions } from '@forge/db';
 import { PLAN_CATALOG, hasPaidAccess, planForSubscription, type PlanDefinition } from './plans.js';
 
 type Counter = { trialConsumed: number; trialReserved: number; paidConsumed: number; paidReserved: number };
@@ -69,6 +69,7 @@ export async function reserveAgentRequest(input: { workspaceId: string; agentId:
   const db = getDb();
   const idempotencyKey = input.idempotencyKey ?? randomUUID();
   return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${input.workspaceId}::text))`);
     const [agent] = await tx.select({ id: agents.id, lineageId: agents.lineageId, status: agents.status }).from(agents).where(and(eq(agents.id, input.agentId), eq(agents.workspaceId, input.workspaceId))).limit(1);
     if (!agent) throw Object.assign(new Error('Agent not found'), { statusCode: 404 });
     if (agent.status === 'disabled') throw Object.assign(new Error('Ative o agente antes de executar uma conversa.'), { statusCode: 409, code: 'AGENT_DISABLED' });
@@ -77,8 +78,17 @@ export async function reserveAgentRequest(input: { workspaceId: string; agentId:
     const [existing] = await tx.select().from(requestReservations).where(and(eq(requestReservations.workspaceId, input.workspaceId), eq(requestReservations.idempotencyKey, idempotencyKey))).limit(1);
     if (existing) return { ...existing, reused: true };
 
-    const [subscription] = await tx.select().from(workspaceSubscriptions).where(eq(workspaceSubscriptions.workspaceId, input.workspaceId)).limit(1);
+    const [[subscription], activeAgents] = await Promise.all([
+      tx.select().from(workspaceSubscriptions).where(eq(workspaceSubscriptions.workspaceId, input.workspaceId)).limit(1),
+      tx.select({ id: agents.id }).from(agents)
+        .where(and(eq(agents.workspaceId, input.workspaceId), inArray(agents.status, ['draft', 'ready'])))
+        .orderBy(asc(agents.createdAt), asc(agents.id)),
+    ]);
     const plan = planForSubscription(subscription);
+    const activeAgentPosition = activeAgents.findIndex((row) => row.id === agent.id);
+    if (activeAgentPosition < 0 || activeAgentPosition >= plan.activeAgentLimit) {
+      throw Object.assign(new Error(`O plano ${plan.name} não inclui este slot de agente ativo.`), { statusCode: 402, code: 'ACTIVE_AGENT_LIMIT' });
+    }
     await tx.insert(agentUsageCounters).values({ lineageId: agent.lineageId, workspaceId: input.workspaceId, agentId: agent.id }).onConflictDoNothing();
     let [counter] = await tx.select().from(agentUsageCounters).where(eq(agentUsageCounters.lineageId, agent.lineageId)).limit(1);
     if (!counter) throw new Error('Usage counter could not be initialized');

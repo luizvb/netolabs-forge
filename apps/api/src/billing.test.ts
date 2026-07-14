@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { revocationWorkspaceForDelivery, subscriptionEventForRetry, subscriptionSnapshotFromStripe } from './billing.js';
+import { activeAgentIdsToDisable, revocationWorkspaceForDelivery, subscriptionEventForRetry, subscriptionSnapshotFromStripe } from './billing.js';
 
 describe('Stripe entitlement snapshots', () => {
   it('derives a paid snapshot only from server-verified subscription metadata', () => {
@@ -9,6 +9,19 @@ describe('Stripe entitlement snapshots', () => {
 
   it('rejects arbitrary or missing plan metadata', () => {
     expect(() => subscriptionSnapshotFromStripe({ id: 'sub_1', customer: 'cus_1', status: 'active', metadata: { workspaceId: 'workspace-1', planKey: 'price_from_browser' } }, 1)).toThrow('metadata');
+  });
+
+  it('derives plan changes from the canonical Stripe Price instead of stale metadata', () => {
+    const snapshot = subscriptionSnapshotFromStripe({
+      id: 'sub_1', customer: 'cus_1', status: 'active', metadata: { workspaceId: 'workspace-1', planKey: 'scale' },
+      items: { data: [{ price: { id: 'price_solo_brl' } }] },
+    }, 2, undefined, { STRIPE_PRICE_SOLO_BRL: 'price_solo_brl' } as NodeJS.ProcessEnv);
+    expect(snapshot.planKey).toBe('solo');
+  });
+
+  it('deterministically disables active slots above a downgraded plan limit', () => {
+    expect(activeAgentIdsToDisable(['oldest', 'middle', 'newest'], 1)).toEqual(['middle', 'newest']);
+    expect(activeAgentIdsToDisable(['only'], 3)).toEqual([]);
   });
 
   it('reconciles a pending Benchline revocation when Stripe redelivers the same subscription event', () => {

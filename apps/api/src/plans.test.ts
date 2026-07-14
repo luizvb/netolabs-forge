@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PLAN_CATALOG, assertAgentCapacity, hasPaidAccess, planForSubscription, publicCatalog, stripePriceId } from './plans.js';
+import { PLAN_CATALOG, assertAgentCapacity, hasPaidAccess, planForSubscription, publicCatalog, stripePlanForPriceId, stripePriceId } from './plans.js';
 
 describe('Forge plan policy', () => {
   it('keeps the approved plan matrix and trial separate', () => {
@@ -13,6 +13,12 @@ describe('Forge plan policy', () => {
   it('never accepts a browser supplied Stripe price id', () => {
     expect(stripePriceId('solo', 'brl', { STRIPE_PRICE_SOLO_BRL: 'price_server_owned' } as NodeJS.ProcessEnv)).toBe('price_server_owned');
     expect(() => stripePriceId('studio', 'usd', {} as NodeJS.ProcessEnv)).toThrow('not configured');
+  });
+
+  it('maps webhook prices back to the server-owned plan and currency', () => {
+    const env = { STRIPE_PRICE_STUDIO_USD: 'price_studio_usd' } as NodeJS.ProcessEnv;
+    expect(stripePlanForPriceId('price_studio_usd', env)).toEqual({ plan: 'studio', currency: 'usd' });
+    expect(() => stripePlanForPriceId('price_from_another_product', env)).toThrow('unknown price');
   });
 
   it('honors only active subscriptions or the bounded past-due grace period', () => {

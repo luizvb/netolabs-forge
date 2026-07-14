@@ -35,6 +35,16 @@ export function stripePriceId(plan: PaidPlanKey, currency: BillingCurrency, env:
   return value;
 }
 
+export function stripePlanForPriceId(priceId: string, env: NodeJS.ProcessEnv = process.env) {
+  for (const plan of paidPlanKeys) {
+    for (const currency of ['brl', 'usd'] as const) {
+      const configuredPriceId = env[`STRIPE_PRICE_${plan.toUpperCase()}_${currency.toUpperCase()}`]?.trim();
+      if (configuredPriceId && configuredPriceId === priceId) return { plan, currency };
+    }
+  }
+  throw Object.assign(new Error('Stripe subscription uses an unknown price.'), { statusCode: 400, code: 'BILLING_UNKNOWN_PRICE' });
+}
+
 export function hasPaidAccess(input: { planKey?: string | null; status?: string | null; graceUntil?: Date | null }, now = new Date()) {
   if (!input.planKey || !isPaidPlanKey(input.planKey)) return false;
   if (input.status === 'active' || input.status === 'trialing') return true;

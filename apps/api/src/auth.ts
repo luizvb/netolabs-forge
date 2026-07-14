@@ -30,7 +30,7 @@ export async function createToken(userId: string, workspaceId: string) {
 }
 
 export function legacyAuthAllowed(env: NodeJS.ProcessEnv = process.env) {
-  return env.NODE_ENV !== 'production' || !env.NEON_AUTH_ISSUER || env.ALLOW_LEGACY_AUTH === 'true';
+  return env.NODE_ENV !== 'production' || env.ALLOW_LEGACY_AUTH === 'true';
 }
 
 export function assertLegacyAuthAllowed(env: NodeJS.ProcessEnv = process.env) {

@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import Stripe from 'stripe';
-import { and, benchlineConnections, eq, getDb, memberships, stripeEvents, users, workspaceSubscriptions } from '@forge/db';
+import { agents, and, asc, benchlineConnections, eq, getDb, inArray, memberships, stripeEvents, users, workspaceSubscriptions } from '@forge/db';
 import { z } from 'zod';
 import { requireAuth } from './auth.js';
-import { type PaidPlanKey, hasPaidAccess, isPaidPlanKey, planForSubscription, publicCatalog, stripePriceId } from './plans.js';
+import { hasPaidAccess, isPaidPlanKey, planForSubscription, publicCatalog, stripePlanForPriceId, stripePriceId } from './plans.js';
 import { workspaceUsage } from './entitlements.js';
 import { revokeBenchlineBundle } from './benchline.js';
 
@@ -16,7 +16,7 @@ type StripeSubscriptionShape = {
   current_period_start?: number;
   current_period_end?: number;
   metadata?: Record<string, string>;
-  items?: { data?: Array<{ current_period_start?: number; current_period_end?: number }> };
+  items?: { data?: Array<{ current_period_start?: number; current_period_end?: number; price?: { id: string } }> };
 };
 
 export function subscriptionEventForRetry(eventType: string, value: unknown) {
@@ -34,9 +34,9 @@ const stripeClient = () => {
 
 const asDate = (value?: number) => value ? new Date(value * 1_000) : null;
 
-export function subscriptionSnapshotFromStripe(subscription: StripeSubscriptionShape, eventCreated: number, fallback?: { workspaceId?: string; planKey?: string }) {
+export function subscriptionSnapshotFromStripe(subscription: StripeSubscriptionShape, eventCreated: number, fallback?: { workspaceId?: string; planKey?: string }, env: NodeJS.ProcessEnv = process.env) {
   const firstItem = subscription.items?.data?.[0];
-  const planKey = subscription.metadata?.planKey ?? fallback?.planKey;
+  const planKey = firstItem?.price?.id ? stripePlanForPriceId(firstItem.price.id, env).plan : subscription.metadata?.planKey ?? fallback?.planKey;
   const workspaceId = subscription.metadata?.workspaceId ?? fallback?.workspaceId;
   if (!workspaceId || !planKey || !isPaidPlanKey(planKey)) throw Object.assign(new Error('Stripe subscription metadata is incomplete'), { statusCode: 400, code: 'INVALID_SUBSCRIPTION_METADATA' });
   const status = subscription.status === 'canceled' ? 'canceled' : subscription.status;
@@ -48,6 +48,10 @@ export function subscriptionSnapshotFromStripe(subscription: StripeSubscriptionS
     currentPeriodEnd: asDate(subscription.current_period_end ?? firstItem?.current_period_end),
     cancelAtPeriodEnd: Boolean(subscription.cancel_at_period_end), graceUntil, providerUpdatedAt: new Date(eventCreated * 1_000), updatedAt: new Date(),
   };
+}
+
+export function activeAgentIdsToDisable(activeAgentIds: string[], activeAgentLimit: number) {
+  return activeAgentIds.slice(activeAgentLimit);
 }
 
 async function requireOwner(request: FastifyRequest) {
@@ -97,9 +101,18 @@ export function registerBillingRoutes(app: FastifyInstance) {
     const auth = await requireOwner(request);
     const db = getDb();
     const [subscription] = await db.select().from(workspaceSubscriptions).where(eq(workspaceSubscriptions.workspaceId, auth.workspaceId)).limit(1);
-    if (!subscription?.stripeCustomerId) throw Object.assign(new Error('No billing account is connected yet.'), { statusCode: 409, code: 'NO_BILLING_ACCOUNT' });
+    if (!subscription?.stripeCustomerId || !subscription.stripeSubscriptionId || !hasPaidAccess(subscription)) throw Object.assign(new Error('No active billing subscription is connected yet.'), { statusCode: 409, code: 'NO_BILLING_ACCOUNT' });
     const origin = (process.env.WEB_ORIGIN ?? 'http://localhost:5173').replace(/\/$/, '');
-    const session = await stripeClient().billingPortal.sessions.create({ customer: subscription.stripeCustomerId, return_url: `${origin}/billing` });
+    const returnUrl = `${origin}/billing`;
+    const session = await stripeClient().billingPortal.sessions.create({
+      customer: subscription.stripeCustomerId,
+      return_url: returnUrl,
+      flow_data: {
+        type: 'subscription_cancel',
+        subscription_cancel: { subscription: subscription.stripeSubscriptionId },
+        after_completion: { type: 'redirect', redirect: { return_url: returnUrl } },
+      },
+    });
     return { url: session.url };
   });
 
@@ -111,18 +124,31 @@ export function registerBillingRoutes(app: FastifyInstance) {
     const stripe = stripeClient();
     const event = stripe.webhooks.constructEvent(rawBody, signature, process.env.STRIPE_WEBHOOK_SECRET);
     const subscriptionEvent = subscriptionEventForRetry(event.type, event.data.object);
+    // Stripe events only have second-level timestamps. Fetching the canonical
+    // subscription prevents two same-second deliveries from restoring stale state.
+    const canonicalSubscription = subscriptionEvent
+      ? await stripe.subscriptions.retrieve(subscriptionEvent.id) as unknown as StripeSubscriptionShape
+      : undefined;
     const db = getDb();
     let revokeWorkspaceId: string | undefined;
-    const eventSubscriptionId = subscriptionEvent?.id;
+    const eventSubscriptionId = canonicalSubscription?.id ?? subscriptionEvent?.id;
     const processed = await db.transaction(async (tx) => {
       const inserted = await tx.insert(stripeEvents).values({ eventId: event.id, type: event.type, payloadHash: createHash('sha256').update(rawBody).digest('hex'), providerCreatedAt: new Date(event.created * 1_000) }).onConflictDoNothing().returning({ eventId: stripeEvents.eventId });
       if (!inserted.length) return false;
       if (event.type.startsWith('customer.subscription.')) {
-        const value = subscriptionEvent!;
+        const value = canonicalSubscription!;
         const [existing] = await tx.select().from(workspaceSubscriptions).where(eq(workspaceSubscriptions.stripeSubscriptionId, value.id)).limit(1);
         const snapshot = subscriptionSnapshotFromStripe(value, event.created, existing ? { workspaceId: existing.workspaceId, planKey: existing.planKey } : undefined);
         if (!existing?.providerUpdatedAt || existing.providerUpdatedAt <= snapshot.providerUpdatedAt) {
           await tx.insert(workspaceSubscriptions).values(snapshot).onConflictDoUpdate({ target: workspaceSubscriptions.workspaceId, set: snapshot });
+          const activePlan = planForSubscription(snapshot);
+          const activeAgents = await tx.select({ id: agents.id }).from(agents)
+            .where(and(eq(agents.workspaceId, snapshot.workspaceId), inArray(agents.status, ['draft', 'ready'])))
+            .orderBy(asc(agents.createdAt), asc(agents.id));
+          const excessAgentIds = activeAgentIdsToDisable(activeAgents.map((agent) => agent.id), activePlan.activeAgentLimit);
+          if (excessAgentIds.length) {
+            await tx.update(agents).set({ status: 'disabled', updatedAt: new Date() }).where(inArray(agents.id, excessAgentIds));
+          }
           if (!hasPaidAccess(snapshot)) {
             revokeWorkspaceId = snapshot.workspaceId;
             await tx.update(benchlineConnections).set({ status: 'revocation_pending', updatedAt: new Date() }).where(eq(benchlineConnections.workspaceId, snapshot.workspaceId));
