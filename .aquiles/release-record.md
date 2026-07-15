@@ -33,3 +33,45 @@ Server-only names: `GOOGLE_CALENDAR_CLIENT_ID`, `GOOGLE_CALENDAR_CLIENT_SECRET`,
 ## Rollback
 
 Revert the feature commit and disconnect any configured calendar before rollback. Migration `0008` is additive and can remain in place while the previous runtime ignores its table and nullable columns. No production migration or credential was changed in this run.
+
+---
+
+# Release record: Premium trial billing
+
+Run: `forge-premium-trial-2026-07-15`
+Date: 2026-07-15
+Phase ceiling: `GIT_PUBLISH`
+
+## Candidate and authorization
+
+- Repository: `git@github.com:luizvb/netolabs-forge.git`
+- Account / owner / repository: `luizvb` / `luizvb` / `netolabs-forge`
+- Visibility / branch: public / `main`
+- Base commit: `aaf000a`
+- Scope: 7-day payment-backed Premium trial, 50 workspace-shared runs, one-time trial persistence, legacy counter initialization, Billing disclosure and additive migration `0009`.
+- Authorized: production migration, commit of the complete candidate and push to `origin/main`.
+- Not authorized: Vercel deploy, environment changes, DNS or live Stripe test/customer mutation.
+
+## Database release evidence
+
+- Neon project / branch / database: `netolabs-forge-db` (`wispy-lab-44668375`) / `main` / `neondb`.
+- Migration command completed at 2026-07-15T15:28:00-03:00 using the repository Drizzle migration path and a direct authenticated Neon connection.
+- Verified columns: `workspace_subscriptions.trial_started_at` and `trial_ends_at`, nullable `timestamp with time zone`.
+- Verified journal: 10 entries; latest timestamp matches migration `0009_glossy_mattie_franklin`.
+- Rollback: application code can be reverted while leaving both nullable columns in place. Dropping columns is unnecessary and would require separate destructive authorization.
+
+## Quality and release gates
+
+- Typecheck: passed.
+- Tests: 87/87 passed.
+- Production build: passed.
+- Desktop and 390 px Billing browser QA: passed with no horizontal overflow.
+- Privacy scan: 1,245 files, zero findings.
+- Diff check: passed.
+- Dependency audit: conditional because npm's legacy audit endpoint returned HTTP 410.
+- Provider smoke: deferred; no Stripe test-mode or production customer mutation was authorized.
+
+## Git publication
+
+- Intended commit: pending.
+- Intended remote SHA verification: pending.

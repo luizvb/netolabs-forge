@@ -88,6 +88,52 @@
 
 ---
 
+# Aquiles delta: Forge Premium trial
+
+## Control metadata
+
+| Field | Value |
+| --- | --- |
+| Run ID | `forge-premium-trial-2026-07-15` |
+| Request class | `feature` |
+| Started | 2026-07-15T15:03:00-03:00 |
+| Last updated | 2026-07-15T15:16:00-03:00 |
+| Status | `complete` |
+| Phase ceiling | `VERIFY` |
+| Current gate | `VERIFY_CONDITIONAL` |
+| Workspace | `/Users/luizneto/aquiles/netolabs-forge` |
+| Repository / branch | `luizvb/netolabs-forge` / `main` |
+
+## Outcome and authorization
+
+- Outcome: one payment-backed 7-day Premium trial per workspace, capped at 50 shared runs, followed by the selected Stripe plan's automatic first charge unless canceled.
+- Local edits and isolated local database QA: authorized by the feature request.
+- Commit, push, preview/production deploy, production migration, environment changes and live Stripe mutation: not authorized and not performed.
+- Automatic charging cannot begin at account creation without payment authorization; the trial therefore starts only after plan selection and successful Stripe Checkout.
+
+## Evidence and release state
+
+- Contract: `.aquiles/premium-trial.md`; QA: `.aquiles/test-report.md`.
+- Implementation: server-owned trial constants, Checkout trial/payment policy, persistent Stripe trial dates, workspace-aggregate atomic usage and billing disclosure UI.
+- Migration: additive `0009_glossy_mattie_franklin.sql`, applied only to an isolated local database.
+- Verification: 87 tests, typecheck, production build, desktop/390 px browser QA, diff check and privacy scan passed.
+- Dependency audit: conditional because npm's legacy audit endpoint returned HTTP 410.
+- QA status: `conditional`; live Stripe test-mode transition and invoice evidence remain the release gate.
+- Rollback: revert the feature code; nullable trial timestamp columns may safely remain while the previous runtime ignores them. Provider-created trial subscriptions retain their Stripe schedule and must be managed through Stripe if a release is rolled back.
+- Next owner: AQUILES after explicit authorization for commit/push/deploy/migration, then TESTER for Stripe test-mode smoke.
+
+## Authorized migration and Git publication follow-up
+
+- Authorization received at 2026-07-15T15:18:00-03:00: apply the pending migration, commit the complete Premium trial candidate and push it to the existing `origin/main`.
+- Neon target verified before mutation: project `netolabs-forge-db` (`wispy-lab-44668375`), primary/default branch `main`, database `neondb`, owner role `neondb_owner`, São Paulo region.
+- Migration result at 2026-07-15T15:28:00-03:00: `pnpm db:migrate` succeeded using a direct Neon connection obtained through authenticated Neon CLI without printing or persisting credentials.
+- Post-migration verification: `trial_started_at` and `trial_ends_at` exist on `workspace_subscriptions` as nullable `timestamp with time zone`; the Drizzle journal contains 10 entries and `0009` is the latest.
+- Schema impact: additive metadata only; no existing subscription or usage row was rewritten by the migration.
+- Git target: authenticated GitHub account `luizvb`, public repository `luizvb/netolabs-forge`, default/current branch `main`, remote `origin`, initially synchronized at `aaf000a`.
+- Deploy state: unchanged. No Vercel deployment, environment mutation or Stripe provider mutation was authorized by this follow-up.
+
+---
+
 # Aquiles run: Forge Qualification + Scheduling Kit
 
 ## Control metadata

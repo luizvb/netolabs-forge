@@ -1,0 +1,2 @@
+ALTER TABLE "workspace_subscriptions" ADD COLUMN "trial_started_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "workspace_subscriptions" ADD COLUMN "trial_ends_at" timestamp with time zone;

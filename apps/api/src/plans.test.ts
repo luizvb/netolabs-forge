@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PLAN_CATALOG, assertAgentCapacity, forgeCatalogPriceMismatch, hasPaidAccess, planForSubscription, publicCatalog, stripePlanForPriceId, stripePriceId } from './plans.js';
+import { PLAN_CATALOG, assertAgentCapacity, forgeCatalogPriceMismatch, hasPaidAccess, hasPaidRequestAllowance, planForSubscription, publicCatalog, stripePlanForPriceId, stripePriceId } from './plans.js';
 
 describe('Forge plan policy', () => {
   it('fails closed on cross-product, mode and catalog Price mismatches', () => {
@@ -15,7 +15,8 @@ describe('Forge plan policy', () => {
       ['solo', 1, 1_500], ['studio', 3, 4_500], ['scale', 10, 15_000],
     ]);
     expect(PLAN_CATALOG.scale.storedAgentLimit).toBeNull();
-    expect(PLAN_CATALOG.trial.trialRequestsPerLineage).toBe(30);
+    expect(PLAN_CATALOG.trial.trialDurationDays).toBe(7);
+    expect(PLAN_CATALOG.trial.trialRequestsPerWorkspace).toBe(50);
   });
 
   it('never accepts a browser supplied Stripe price id', () => {
@@ -32,6 +33,10 @@ describe('Forge plan policy', () => {
   it('honors only active subscriptions or the bounded past-due grace period', () => {
     const now = new Date('2026-07-13T12:00:00Z');
     expect(hasPaidAccess({ planKey: 'studio', status: 'active' }, now)).toBe(true);
+    expect(hasPaidAccess({ planKey: 'studio', status: 'trialing', trialEndsAt: new Date('2026-07-20T12:00:00Z') }, now)).toBe(true);
+    expect(hasPaidAccess({ planKey: 'studio', status: 'trialing', trialEndsAt: new Date('2026-07-12T12:00:00Z') }, now)).toBe(false);
+    expect(hasPaidRequestAllowance({ planKey: 'studio', status: 'trialing', trialEndsAt: new Date('2026-07-20T12:00:00Z') }, now)).toBe(false);
+    expect(hasPaidRequestAllowance({ planKey: 'studio', status: 'active' }, now)).toBe(true);
     expect(hasPaidAccess({ planKey: 'studio', status: 'past_due', graceUntil: new Date('2026-07-14T12:00:00Z') }, now)).toBe(true);
     expect(planForSubscription({ planKey: 'studio', status: 'past_due', graceUntil: new Date('2026-07-12T12:00:00Z') }, now).key).toBe('trial');
     expect(hasPaidAccess({ planKey: 'scale', status: 'canceled' }, now)).toBe(false);

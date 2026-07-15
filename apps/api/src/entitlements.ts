@@ -1,18 +1,31 @@
 import { randomUUID } from 'node:crypto';
 import { agentUsageCounters, agents, and, asc, eq, getDb, inArray, requestReservations, sql, workspaceSubscriptions } from '@forge/db';
-import { PLAN_CATALOG, hasPaidAccess, planForSubscription, type PlanDefinition } from './plans.js';
+import { PLAN_CATALOG, PREMIUM_TRIAL_REQUEST_LIMIT, hasPaidRequestAllowance, planForSubscription, type PlanDefinition } from './plans.js';
 
 type Counter = { trialConsumed: number; trialReserved: number; paidConsumed: number; paidReserved: number };
+type UsageAccess = { trial: boolean; paid: boolean };
 
-export function chooseUsageBucket(counter: Counter, paid: boolean, requestsPerAgent = 1_500, renewalAt: Date | null = null) {
-  if (counter.trialConsumed + counter.trialReserved < 30) return 'trial' as const;
-  if (paid && counter.paidConsumed + counter.paidReserved < requestsPerAgent) return 'paid' as const;
-  throw Object.assign(new Error(paid ? 'Este agente atingiu a franquia mensal de requisições.' : 'As 30 requisições gratuitas deste agente terminaram. Escolha um plano para continuar.'), {
+export function aggregateTrialUsage(counters: Array<Pick<Counter, 'trialConsumed' | 'trialReserved'>>) {
+  return counters.reduce((total, item) => ({
+    consumed: total.consumed + item.trialConsumed,
+    reserved: total.reserved + item.trialReserved,
+  }), { consumed: 0, reserved: 0 });
+}
+
+export function chooseUsageBucket(counter: Counter, access: UsageAccess, requestsPerAgent = 1_500, renewalAt: Date | null = null, trialEndsAt: Date | null = null) {
+  if (access.trial && counter.trialConsumed + counter.trialReserved < PREMIUM_TRIAL_REQUEST_LIMIT) return 'trial' as const;
+  if (access.paid && counter.paidConsumed + counter.paidReserved < requestsPerAgent) return 'paid' as const;
+  const message = access.paid
+    ? 'Este agente atingiu a franquia mensal de requisições.'
+    : access.trial
+      ? 'As 50 runs do período Premium terminaram. A franquia mensal começa após a cobrança do plano.'
+      : 'Inicie o teste Premium no Checkout para executar seus agentes.';
+  throw Object.assign(new Error(message), {
     statusCode: 402,
     code: 'USAGE_EXHAUSTED',
     details: {
-      exhaustedBucket: paid ? 'paid' : 'trial',
-      trial: { used: counter.trialConsumed, reserved: counter.trialReserved, limit: 30 },
+      exhaustedBucket: access.paid ? 'paid' : 'trial',
+      trial: { used: counter.trialConsumed, reserved: counter.trialReserved, limit: PREMIUM_TRIAL_REQUEST_LIMIT, endsAt: trialEndsAt?.toISOString() ?? null },
       paid: { used: counter.paidConsumed, reserved: counter.paidReserved, limit: requestsPerAgent },
       renewalAt: renewalAt?.toISOString() ?? null,
     },
@@ -97,7 +110,11 @@ export async function reserveAgentRequest(input: { workspaceId: string; agentId:
     if (periodChanged) {
       [counter] = await tx.update(agentUsageCounters).set({ paidConsumed: 0, paidReserved: 0, periodStart: subscription!.currentPeriodStart, periodEnd: subscription!.currentPeriodEnd, updatedAt: new Date() }).where(eq(agentUsageCounters.lineageId, agent.lineageId)).returning();
     }
-    const bucket = chooseUsageBucket(counter, hasPaidAccess(subscription ?? {}), plan.requestsPerActiveAgent || PLAN_CATALOG.solo.requestsPerActiveAgent, subscription?.currentPeriodEnd ?? null);
+    const workspaceCounters = await tx.select().from(agentUsageCounters).where(eq(agentUsageCounters.workspaceId, input.workspaceId));
+    const workspaceTrialTotals = aggregateTrialUsage(workspaceCounters);
+    const workspaceTrial: Counter = { trialConsumed: workspaceTrialTotals.consumed, trialReserved: workspaceTrialTotals.reserved, paidConsumed: counter.paidConsumed, paidReserved: counter.paidReserved };
+    const trialActive = subscription?.status === 'trialing' && Boolean(subscription.trialEndsAt && subscription.trialEndsAt > new Date());
+    const bucket = chooseUsageBucket(workspaceTrial, { trial: trialActive, paid: hasPaidRequestAllowance(subscription ?? {}) }, plan.requestsPerActiveAgent || PLAN_CATALOG.solo.requestsPerActiveAgent, subscription?.currentPeriodEnd ?? null, subscription?.trialEndsAt ?? null);
     const [reservation] = await tx.insert(requestReservations).values({ idempotencyKey, workspaceId: input.workspaceId, agentId: agent.id, lineageId: agent.lineageId, bucket, periodStart: bucket === 'paid' ? subscription?.currentPeriodStart : null }).returning();
     await tx.update(agentUsageCounters).set(bucket === 'trial'
       ? { trialReserved: sql`${agentUsageCounters.trialReserved} + 1`, updatedAt: new Date() }
@@ -133,5 +150,7 @@ export async function workspaceUsage(workspaceId: string) {
     db.select().from(agentUsageCounters).where(eq(agentUsageCounters.workspaceId, workspaceId)),
   ]);
   const plan = planForSubscription(subscription[0]);
-  return { plan, subscription: subscription[0] ?? null, agents: counters.map((counter) => ({ agentId: counter.agentId, lineageId: counter.lineageId, trial: { used: counter.trialConsumed, reserved: counter.trialReserved, limit: 30 }, paid: { used: counter.paidConsumed, reserved: counter.paidReserved, limit: plan.requestsPerActiveAgent }, periodStart: counter.periodStart, periodEnd: counter.periodEnd })) };
+  const aggregateTrial = aggregateTrialUsage(counters);
+  const trial = { used: aggregateTrial.consumed, reserved: aggregateTrial.reserved };
+  return { plan, subscription: subscription[0] ?? null, trial: { ...trial, limit: PREMIUM_TRIAL_REQUEST_LIMIT, endsAt: subscription[0]?.trialEndsAt ?? null, eligible: !subscription[0]?.trialStartedAt }, agents: counters.map((counter) => ({ agentId: counter.agentId, lineageId: counter.lineageId, trial: { used: counter.trialConsumed, reserved: counter.trialReserved, limit: PREMIUM_TRIAL_REQUEST_LIMIT }, paid: { used: counter.paidConsumed, reserved: counter.paidReserved, limit: plan.requestsPerActiveAgent }, periodStart: counter.periodStart, periodEnd: counter.periodEnd })) };
 }

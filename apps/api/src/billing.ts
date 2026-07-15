@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import Stripe from 'stripe';
-import { agents, and, asc, benchlineConnections, eq, getDb, inArray, memberships, sql, stripeEvents, users, workspaceSubscriptions } from '@forge/db';
+import { agentUsageCounters, agents, and, asc, benchlineConnections, eq, getDb, inArray, memberships, sql, stripeEvents, users, workspaceSubscriptions } from '@forge/db';
 import { z } from 'zod';
 import { requireAuth } from './auth.js';
-import { forgeCatalogPriceMismatch, hasPaidAccess, isPaidPlanKey, planForSubscription, publicCatalog, stripePlanForPriceId, stripePriceId } from './plans.js';
+import { PREMIUM_TRIAL_DURATION_DAYS, forgeCatalogPriceMismatch, hasPaidAccess, isPaidPlanKey, planForSubscription, publicCatalog, stripePlanForPriceId, stripePriceId } from './plans.js';
 import { workspaceUsage } from './entitlements.js';
 import { revokeBenchlineBundle } from './benchline.js';
 
@@ -16,6 +16,8 @@ type StripeSubscriptionShape = {
   cancel_at?: number | null;
   current_period_start?: number;
   current_period_end?: number;
+  trial_start?: number | null;
+  trial_end?: number | null;
   metadata?: Record<string, string>;
   items?: { data?: Array<{ current_period_start?: number; current_period_end?: number; price?: { id: string } }> };
 };
@@ -67,7 +69,17 @@ export function normalizedBillingState(input?: { status?: string | null; cancelA
   return input.status === 'unpaid' ? 'past_due_blocked' : 'reconciliation_required';
 }
 
-export function subscriptionSnapshotFromStripe(subscription: StripeSubscriptionShape, eventCreated: number, fallback?: { workspaceId?: string; planKey?: string }, env: NodeJS.ProcessEnv = process.env) {
+export function premiumTrialCheckoutOptions(trialStartedAt?: Date | null) {
+  return {
+    paymentMethodCollection: 'always' as const,
+    subscriptionTrial: trialStartedAt ? {} : {
+      trial_period_days: PREMIUM_TRIAL_DURATION_DAYS,
+      trial_settings: { end_behavior: { missing_payment_method: 'cancel' as const } },
+    },
+  };
+}
+
+export function subscriptionSnapshotFromStripe(subscription: StripeSubscriptionShape, eventCreated: number, fallback?: { workspaceId?: string; planKey?: string; trialStartedAt?: Date | null; trialEndsAt?: Date | null }, env: NodeJS.ProcessEnv = process.env) {
   const firstItem = subscription.items?.data?.[0];
   const planKey = firstItem?.price?.id ? stripePlanForPriceId(firstItem.price.id, env).plan : subscription.metadata?.planKey ?? fallback?.planKey;
   const workspaceId = subscription.metadata?.workspaceId ?? fallback?.workspaceId;
@@ -79,6 +91,8 @@ export function subscriptionSnapshotFromStripe(subscription: StripeSubscriptionS
     stripeCustomerId: typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id,
     currentPeriodStart: asDate(subscription.current_period_start ?? firstItem?.current_period_start),
     currentPeriodEnd: asDate(subscription.current_period_end ?? firstItem?.current_period_end),
+    trialStartedAt: asDate(subscription.trial_start ?? undefined) ?? fallback?.trialStartedAt ?? null,
+    trialEndsAt: asDate(subscription.trial_end ?? undefined) ?? fallback?.trialEndsAt ?? null,
     cancelAtPeriodEnd: stripeSubscriptionCancellationScheduled(subscription, eventCreated), graceUntil, providerUpdatedAt: new Date(eventCreated * 1_000), updatedAt: new Date(),
   };
 }
@@ -88,6 +102,10 @@ export function shouldApplySubscriptionSnapshot(existing: { status: string; prov
   const delta = incoming.providerUpdatedAt.getTime() - existing.providerUpdatedAt.getTime();
   if (delta !== 0) return delta > 0;
   return !(['active', 'trialing'].includes(existing.status) && ['past_due', 'unpaid'].includes(incoming.status));
+}
+
+export function shouldResetTrialUsage(existing: { trialStartedAt?: Date | null } | undefined, incoming: { status: string; trialStartedAt?: Date | null }) {
+  return !existing?.trialStartedAt && incoming.status === 'trialing' && Boolean(incoming.trialStartedAt);
 }
 
 export function subscriptionWorkspaceLockKey(subscription: StripeSubscriptionShape, fallbackWorkspaceId?: string) {
@@ -123,7 +141,10 @@ export function registerBillingRoutes(app: FastifyInstance) {
         currentPeriodStart: usage.subscription.currentPeriodStart,
         currentPeriodEnd: usage.subscription.currentPeriodEnd,
         graceUntil: usage.subscription.graceUntil,
+        trialStartedAt: usage.subscription.trialStartedAt,
+        trialEndsAt: usage.subscription.trialEndsAt,
       } : null,
+      trial: usage.trial,
       paidAccess: hasPaidAccess(usage.subscription ?? {}),
       normalizedState: normalizedBillingState(usage.subscription ?? undefined),
       portalAvailable: Boolean(usage.subscription?.stripeCustomerId),
@@ -159,18 +180,20 @@ export function registerBillingRoutes(app: FastifyInstance) {
       }
       const previousStatus = subscription?.status ?? 'trial_eligible';
       await tx.insert(workspaceSubscriptions).values({ workspaceId: auth.workspaceId, stripeCustomerId: customerId, status: 'checkout_pending' }).onConflictDoUpdate({ target: workspaceSubscriptions.workspaceId, set: { stripeCustomerId: customerId, status: 'checkout_pending', updatedAt: now } });
-      return { customerId, previousStatus };
+      return { customerId, previousStatus, trialStartedAt: subscription?.trialStartedAt ?? null };
     });
     const origin = (process.env.WEB_ORIGIN ?? 'http://localhost:5173').replace(/\/$/, '');
     try {
       const lease = Math.floor(now.getTime() / (40 * 60_000));
+      const premiumTrial = premiumTrialCheckoutOptions(checkoutState.trialStartedAt);
       const session = await stripe.checkout.sessions.create({
         mode: 'subscription', customer: checkoutState.customerId, client_reference_id: auth.workspaceId,
         line_items: [{ price: configuredPriceId, quantity: 1 }],
+        payment_method_collection: premiumTrial.paymentMethodCollection,
         success_url: `${origin}/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${origin}/billing?checkout=canceled`, allow_promotion_codes: true,
-        metadata: { workspaceId: auth.workspaceId, planKey: input.plan, ownerBrand: 'netolabs', productKey: 'forge' },
-        subscription_data: { metadata: { workspaceId: auth.workspaceId, planKey: input.plan, ownerBrand: 'netolabs', productKey: 'forge' } },
+        metadata: { workspaceId: auth.workspaceId, planKey: input.plan, ownerBrand: 'netolabs', productKey: 'forge', premiumTrial: '7d-50-runs' },
+        subscription_data: { metadata: { workspaceId: auth.workspaceId, planKey: input.plan, ownerBrand: 'netolabs', productKey: 'forge', premiumTrial: '7d-50-runs' }, ...premiumTrial.subscriptionTrial },
       }, { idempotencyKey: `forge-checkout-${auth.workspaceId}-${input.plan}-${input.currency}-${lease}` });
       return { url: session.url };
     } catch (error) {
@@ -224,10 +247,17 @@ export function registerBillingRoutes(app: FastifyInstance) {
         const workspaceLockKey = subscriptionWorkspaceLockKey(value);
         if (workspaceLockKey) await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${workspaceLockKey}::text))`);
         await tx.execute(sql`select workspace_id from workspace_subscriptions where stripe_subscription_id = ${value.id} for update`);
-        const [existing] = await tx.select().from(workspaceSubscriptions).where(eq(workspaceSubscriptions.stripeSubscriptionId, value.id)).limit(1);
-        const snapshot = subscriptionSnapshotFromStripe(value, event.created, existing ? { workspaceId: existing.workspaceId, planKey: existing.planKey } : undefined);
+        let [existing] = await tx.select().from(workspaceSubscriptions).where(eq(workspaceSubscriptions.stripeSubscriptionId, value.id)).limit(1);
+        if (!existing && workspaceLockKey) {
+          [existing] = await tx.select().from(workspaceSubscriptions).where(eq(workspaceSubscriptions.workspaceId, workspaceLockKey)).limit(1);
+        }
+        const snapshot = subscriptionSnapshotFromStripe(value, event.created, existing ? { workspaceId: existing.workspaceId, planKey: existing.planKey, trialStartedAt: existing.trialStartedAt, trialEndsAt: existing.trialEndsAt } : undefined);
         if (shouldApplySubscriptionSnapshot(existing, snapshot)) {
+          const resetTrialUsage = shouldResetTrialUsage(existing, snapshot);
           await tx.insert(workspaceSubscriptions).values(snapshot).onConflictDoUpdate({ target: workspaceSubscriptions.workspaceId, set: snapshot });
+          if (resetTrialUsage) {
+            await tx.update(agentUsageCounters).set({ trialConsumed: 0, trialReserved: 0, updatedAt: new Date() }).where(eq(agentUsageCounters.workspaceId, snapshot.workspaceId));
+          }
           const activePlan = planForSubscription(snapshot);
           const activeAgents = await tx.select({ id: agents.id }).from(agents)
             .where(and(eq(agents.workspaceId, snapshot.workspaceId), inArray(agents.status, ['draft', 'ready'])))

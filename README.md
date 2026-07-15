@@ -39,7 +39,7 @@ The web application and API run as separate Vercel projects from the same monore
 - Full conversation and model-call ledger with inputs, outputs, tokens, latency, estimated Google model cost, and the pricing snapshot used for each estimate
 - Workspace and per-agent observability dashboards for traffic, quality, knowledge health, token usage, and estimated spend
 - Stripe subscriptions for Solo, Studio and Scale, with signed idempotent webhooks, Customer Portal and server-owned price IDs
-- 30 lifetime test executions per agent lineage followed by an atomic 1,500-request monthly allowance per active paid agent
+- one 7-day Premium trial per workspace, capped at 50 shared runs, followed by the selected plan's automatic first charge and atomic 1,500-request monthly allowance per active paid agent
 - Explicit, versioned Forge-to-Benchline consent with signed synchronization and free bundled eval entitlements
 - Responsive web interface with explicit loading, empty, and error states
 - Drizzle migrations and Neon Postgres support
@@ -192,7 +192,7 @@ Forge uses two Vercel projects:
 6. Deploy the Benchline partner migration/API with the shared HMAC secret before enabling `BENCHLINE_API_URL` in Forge.
 7. Request-driven ingestion extends the Vercel Function lifetime so jobs begin immediately. A secured daily cron recovers abandoned work on Hobby deployments; for sustained throughput and fast retries, run `pnpm worker` as a persistent process.
 
-Checkout redirects never grant product access. Forge activates or changes a plan only after processing a verified Stripe subscription webhook. The implementation has no automatic overage: limits stop execution until renewal or an explicit plan change.
+Checkout always collects a payment method and grants one 7-day Premium trial per workspace through the verified Stripe subscription webhook. The trial is capped at 50 shared runs; if it is not canceled, Stripe charges the selected plan when the trial ends. Checkout redirects never grant product access. The implementation has no automatic overage: monthly limits stop execution until renewal or an explicit plan change.
 
 Prompt and eval generation have a deterministic, guardrailed fallback so the authoring workflow remains available without model credentials. Chat, model-judged eval execution, and AI prompt review require either `OPENROUTER_API_KEY` or direct Google/Vertex credentials. Existing unqualified Gemini model names automatically use OpenRouter when it is the only configured model runtime.
 

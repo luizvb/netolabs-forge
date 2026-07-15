@@ -153,6 +153,7 @@ export const workspaceSubscriptions = pgTable('workspace_subscriptions', {
   planKey: text('plan_key').notNull().default('trial'), status: text('status').notNull().default('trial_eligible'),
   stripeCustomerId: text('stripe_customer_id'), stripeSubscriptionId: text('stripe_subscription_id'),
   currentPeriodStart: timestamp('current_period_start', { withTimezone: true }), currentPeriodEnd: timestamp('current_period_end', { withTimezone: true }),
+  trialStartedAt: timestamp('trial_started_at', { withTimezone: true }), trialEndsAt: timestamp('trial_ends_at', { withTimezone: true }),
   cancelAtPeriodEnd: boolean('cancel_at_period_end').notNull().default(false), graceUntil: timestamp('grace_until', { withTimezone: true }),
   providerUpdatedAt: timestamp('provider_updated_at', { withTimezone: true }), ...timestamps,
 }, (t) => [uniqueIndex('workspace_subscriptions_customer_uq').on(t.stripeCustomerId), uniqueIndex('workspace_subscriptions_subscription_uq').on(t.stripeSubscriptionId)]);

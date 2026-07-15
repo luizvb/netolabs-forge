@@ -1,10 +1,38 @@
 import { describe, expect, it } from 'vitest';
-import { activeAgentIdsToDisable, normalizedBillingState, revocationWorkspaceForDelivery, shouldApplySubscriptionSnapshot, stripeSubscriptionCancellationScheduled, subscriptionEventForRetry, subscriptionIdFromInvoice, subscriptionSnapshotFromStripe, subscriptionWorkspaceLockKey } from './billing.js';
+import { activeAgentIdsToDisable, normalizedBillingState, premiumTrialCheckoutOptions, revocationWorkspaceForDelivery, shouldApplySubscriptionSnapshot, shouldResetTrialUsage, stripeSubscriptionCancellationScheduled, subscriptionEventForRetry, subscriptionIdFromInvoice, subscriptionSnapshotFromStripe, subscriptionWorkspaceLockKey } from './billing.js';
 
 describe('Stripe entitlement snapshots', () => {
   it('derives a paid snapshot only from server-verified subscription metadata', () => {
-    const snapshot = subscriptionSnapshotFromStripe({ id: 'sub_1', customer: 'cus_1', status: 'active', cancel_at_period_end: false, current_period_start: 1_700_000_000, current_period_end: 1_702_592_000, metadata: { workspaceId: 'workspace-1', planKey: 'studio' } }, 1_700_000_010);
-    expect(snapshot).toMatchObject({ workspaceId: 'workspace-1', planKey: 'studio', status: 'active', stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1' });
+    const snapshot = subscriptionSnapshotFromStripe({ id: 'sub_1', customer: 'cus_1', status: 'trialing', cancel_at_period_end: false, current_period_start: 1_700_000_000, current_period_end: 1_702_592_000, trial_start: 1_700_000_000, trial_end: 1_700_604_800, metadata: { workspaceId: 'workspace-1', planKey: 'studio' } }, 1_700_000_010);
+    expect(snapshot).toMatchObject({ workspaceId: 'workspace-1', planKey: 'studio', status: 'trialing', stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1' });
+    expect(snapshot.trialStartedAt?.toISOString()).toBe('2023-11-14T22:13:20.000Z');
+    expect(snapshot.trialEndsAt?.toISOString()).toBe('2023-11-21T22:13:20.000Z');
+  });
+
+  it('offers one seven-day trial and always collects payment before it starts', () => {
+    expect(premiumTrialCheckoutOptions(null)).toEqual({
+      paymentMethodCollection: 'always',
+      subscriptionTrial: { trial_period_days: 7, trial_settings: { end_behavior: { missing_payment_method: 'cancel' } } },
+    });
+    expect(premiumTrialCheckoutOptions(new Date('2026-07-15T12:00:00Z'))).toEqual({ paymentMethodCollection: 'always', subscriptionTrial: {} });
+  });
+
+  it('preserves the one-time trial marker on a later subscription without trial fields', () => {
+    const trialStartedAt = new Date('2026-07-15T12:00:00Z');
+    const trialEndsAt = new Date('2026-07-22T12:00:00Z');
+    const snapshot = subscriptionSnapshotFromStripe(
+      { id: 'sub_2', customer: 'cus_1', status: 'active', metadata: { workspaceId: 'workspace-1', planKey: 'solo' } },
+      1_784_112_400,
+      { workspaceId: 'workspace-1', planKey: 'solo', trialStartedAt, trialEndsAt },
+    );
+    expect(snapshot).toMatchObject({ trialStartedAt, trialEndsAt });
+  });
+
+  it('resets legacy free usage only when the first verified Stripe trial begins', () => {
+    const trialStartedAt = new Date('2026-07-15T12:00:00Z');
+    expect(shouldResetTrialUsage(undefined, { status: 'trialing', trialStartedAt })).toBe(true);
+    expect(shouldResetTrialUsage({ trialStartedAt }, { status: 'trialing', trialStartedAt })).toBe(false);
+    expect(shouldResetTrialUsage(undefined, { status: 'active', trialStartedAt: null })).toBe(false);
   });
 
   it('rejects arbitrary or missing plan metadata', () => {

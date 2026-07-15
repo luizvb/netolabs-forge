@@ -76,6 +76,38 @@ Status: `conditional_pass`
 
 Live Google consent, calendar discovery, FreeBusy and event/Meet creation were not executed because no user-owned OAuth client or refresh token was provided and production environment mutation was not authorized. The implementation is ready for that design-partner gate after the documented environment values and exact callback URI are configured.
 
+---
+
+# QA report: Premium trial billing
+
+Run: `forge-premium-trial-2026-07-15`
+Status: `conditional`
+Environment: isolated local PGlite/PostgreSQL, Fastify API, Vite web, Stripe boundary mocked by pure contract tests
+
+## Acceptance evidence
+
+- `AC-TRIAL-001`: passed. Checkout policy tests prove payment collection is always required, the first eligible Checkout sends a 7-day trial, and a workspace with a persisted trial start receives no second trial.
+- `AC-TRIAL-002`: passed at policy/transaction review. Aggregate tests reach 49 consumed plus 1 reserved across two agents and reject the next run; the reservation path uses the existing workspace advisory lock.
+- `AC-TRIAL-003`: passed. A `trialing` workspace cannot use the paid bucket, while an `active` subscription goes directly to the monthly bucket without carrying unused trial runs.
+- `AC-TRIAL-004`: passed. Subscription snapshots preserve `trial_started_at` and `trial_ends_at` when a later subscription omits trial fields.
+- `AC-TRIAL-005`: passed. Billing status exposes aggregate trial usage and dates; the rendered free/eligible screen discloses 7 days, 50 shared runs, mandatory payment method and automatic first charge unless canceled.
+- `AC-TRIAL-006`: passed. Legacy free usage resets only on the first verified `trialing` snapshot; retries and later subscriptions cannot reset it again.
+
+## Verification ledger
+
+- `pnpm typecheck`: passed across web, database and API.
+- `pnpm test`: passed, 87/87 tests across 19 test files.
+- `pnpm build`: passed for production web, database and API builds.
+- Migration `0009_glossy_mattie_franklin.sql`: reviewed as two nullable additive timestamp columns and applied successfully to an isolated local database.
+- Browser QA: authenticated Billing screen passed at default desktop and 390 × 844; all three plan actions disclosed the 7-day trial and document width remained exactly 390 px with no horizontal overflow.
+- `git diff --check`: passed.
+- Aquiles privacy scan: 1,245 files, zero findings.
+- `pnpm audit --prod`: inconclusive because the npm legacy audit endpoint returned HTTP 410; this is an external tooling limitation, not a clean vulnerability result.
+
+## Conditional provider gate
+
+Stripe test-mode Checkout, signed `trialing -> active` webhook delivery and the actual first invoice charge were not executed because no provider mutation or live/test billing credentials were authorized. Local code is ready; release remains conditional on applying migration `0009`, deploying the API/web candidate and completing a Stripe test-clock or sandbox smoke.
+
 ## GitHub publication
 
 - Feature commit: `80955c3f24aabb445956c48eaf3bbcedb73c4885`.
