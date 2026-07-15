@@ -185,10 +185,10 @@
 | Run ID | `forge-google-calendar-2026-07-15` |
 | Request class | `integration` |
 | Started | 2026-07-15T14:40:00-03:00 |
-| Last updated | 2026-07-15T15:02:00-03:00 |
-| Status | `in_progress` |
+| Last updated | 2026-07-15T15:07:00-03:00 |
+| Status | `complete` |
 | Phase ceiling | `GIT_PUBLISH` |
-| Current gate | `GIT_PUBLISH_PENDING` |
+| Current gate | `GIT_PUBLISHED` |
 | Workspace | `/Users/luizneto/aquiles/netolabs-forge` |
 | Repository / branch | `luizvb/netolabs-forge` / `main` |
 | Source state | Verified Qualification + Scheduling work plus the earlier multi-provider/public-agent delta, all intentionally included by the user's “commit e push de tudo” instruction |
@@ -227,7 +227,7 @@
 | AC-GCAL-007 | Backward-compatible internal scheduling | `implemented` |
 | AC-GCAL-008 | Responsive operator connection states | `implemented` |
 | AC-GCAL-009 | Server environment and Google Cloud setup documentation | `implemented` |
-| AC-GCAL-010 | Full verification and Git publication | `verification_passed_publish_pending` |
+| AC-GCAL-010 | Full verification and Git publication | `passed` |
 
 ## Verification ledger
 
@@ -239,11 +239,13 @@
 | V-GCAL-004 | Local migration | `0008` and preceding uncommitted migrations applied successfully to isolated PostgreSQL |
 | V-GCAL-005 | Browser QA | Disconnected and reauthorization states passed; 390 px had no horizontal overflow |
 | V-GCAL-006 | Aquiles privacy scan | 1,241 files, zero findings |
-| V-GCAL-007 | `pnpm audit --prod` | Conditional: npm registry legacy endpoint returned HTTP 410; no audit result claimed |
+| V-GCAL-007 | `pnpm audit:prod` | Passed through pnpm 11.13.0 / npm bulk advisory endpoint; no known vulnerabilities |
 | V-GCAL-008 | `git diff --check` | Passed |
+| V-GCAL-009 | Git publication | Feature `80955c3` and audit-gate fix `3be1734` verified on `origin/main` |
+| V-GCAL-010 | GitHub CI | Run `29439126364` passed all jobs |
 
 ## Pre-publication state
 
-- QA status: `conditional_pass`; only live provider credentials and the retired registry audit endpoint remain external gates.
+- QA status: `conditional_pass`; only the live provider flow requiring user-owned Google credentials remains an external gate.
 - Production state: unchanged; no deploy, environment update or production migration was authorized.
-- Git publication is explicitly authorized and is the next in-scope action.
+- Git publication: complete on `luizvb/netolabs-forge:main`; CI passed.

@@ -8,7 +8,9 @@ Phase ceiling: `GIT_PUBLISH`
 
 - Repository: `git@github.com:luizvb/netolabs-forge.git`
 - Branch: `main`
-- Source commit: pending feature commit
+- Feature commit: `80955c3f24aabb445956c48eaf3bbcedb73c4885`
+- Audit-gate fix: `3be1734ac3faaef6ed69748db3b8b15b4c9dab8d`
+- Verified code head on `origin/main`: `3be1734ac3faaef6ed69748db3b8b15b4c9dab8d`
 - Deployment: not requested; production runtime and database remain unchanged
 - Scope: existing multi-provider/public-agent work, Qualification + Scheduling Kit, product/GTM artifacts and Google Calendar adapter
 
@@ -20,8 +22,9 @@ Phase ceiling: `GIT_PUBLISH`
 - Additive migrations: applied to isolated local PostgreSQL
 - Browser QA: disconnected and reauthorization states passed at desktop and 390 px
 - Privacy scan: 1,241 files, zero findings
-- Dependency audit: conditional; npm registry legacy audit endpoint returned HTTP 410
+- Dependency audit: passed with pnpm 11.13.0 against npm's supported bulk advisory endpoint; no known vulnerabilities found
 - Live Google OAuth: conditional; requires owner credentials and environment authorization
+- GitHub CI: passed — `https://github.com/luizvb/netolabs-forge/actions/runs/29439126364`
 
 ## Configuration
 

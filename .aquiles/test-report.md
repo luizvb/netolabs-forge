@@ -60,7 +60,7 @@ Status: `conditional_pass`
 - `pnpm build`: production web, database and API builds passed.
 - `git diff --check`: passed.
 - Aquiles privacy scan: 1,241 files, zero findings.
-- `pnpm audit --prod`: registry audit endpoint returned HTTP 410 because that endpoint is being retired; rerun with `--ignore-registry-errors` confirmed the infrastructure condition but produced no vulnerability result. This is recorded as an external tooling limitation, not a clean audit.
+- The original `pnpm audit --prod` gate exposed a retired npm endpoint (HTTP 410). The repository and CI were updated to run pnpm 11.13.0 against npm's supported bulk advisory API; `pnpm audit:prod` then passed with no known vulnerabilities.
 
 ## Migration and integration evidence
 
@@ -75,3 +75,9 @@ Status: `conditional_pass`
 ## Residual live-provider gate
 
 Live Google consent, calendar discovery, FreeBusy and event/Meet creation were not executed because no user-owned OAuth client or refresh token was provided and production environment mutation was not authorized. The implementation is ready for that design-partner gate after the documented environment values and exact callback URI are configured.
+
+## GitHub publication
+
+- Feature commit: `80955c3f24aabb445956c48eaf3bbcedb73c4885`.
+- Audit-gate fix: `3be1734ac3faaef6ed69748db3b8b15b4c9dab8d`.
+- GitHub CI run `29439126364`: passed typecheck, database runtime build, 81 tests, production build and production dependency audit.
