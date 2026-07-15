@@ -11,6 +11,7 @@
     "start:api": "pnpm --filter @forge/api build && node apps/api/dist/server.js",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
+    "audit:prod": "corepack pnpm@11.13.0 --pm-on-fail=ignore audit --prod",
     "db:generate": "pnpm --filter @forge/db generate",
     "db:migrate": "pnpm --filter @forge/db migrate",
     "db:local": "pglite-server --db=./.local-postgres --port=54329",
@@ -22,13 +23,5 @@
   },
   "devDependencies": {
     "@electric-sql/pglite-socket": "^0.1.5"
-  },
-  "pnpm": {
-    "overrides": {
-      "@opentelemetry/core": "2.9.0",
-      "@tootallnate/once": "2.0.1",
-      "tar": "7.5.16",
-      "uuid": "11.1.1"
-    }
   }
 }

@@ -173,7 +173,7 @@ The paid-pilot offer, ICP, pricing hypotheses, ROI model and delivery motion are
 pnpm typecheck       # Type-check every workspace
 pnpm test            # Run the test suite
 pnpm build           # Build all applications and packages
-pnpm audit --prod    # Audit production dependencies
+pnpm audit:prod      # Audit production dependencies through npm's supported bulk advisory API
 pnpm db:generate     # Generate a Drizzle migration
 pnpm db:migrate      # Apply pending migrations
 pnpm smoke:local     # Run the HTTP integration smoke test
