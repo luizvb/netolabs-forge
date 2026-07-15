@@ -20,7 +20,7 @@ const statusSchema = z.object({
   agent: z.object({ externalAgentId: z.string(), agentId: z.string(), twinId: z.string(), latestEval: z.object({ score: z.number().nullable(), status: z.string(), completedAt: z.string().nullable() }).nullable(), findings: z.number().int().nonnegative(), recommendations: z.number().int().nonnegative() }).nullable().optional(),
 });
 
-export function forgeAgentPayload(agent: typeof agents.$inferSelect) {
+export function forgeAgentPayload<T extends Pick<typeof agents.$inferSelect, 'id' | 'name' | 'description' | 'model' | 'instructions' | 'guardrails' | 'promptVersion' | 'status'>>(agent: T) {
   return {
     externalAgentId: agent.id,
     name: agent.name,

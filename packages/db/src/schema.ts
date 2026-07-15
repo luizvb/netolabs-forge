@@ -35,10 +35,54 @@ export const agents = pgTable('agents', {
   lineageId: uuid('lineage_id').notNull().defaultRandom(),
   name: text('name').notNull(), slug: text('slug').notNull(), description: text('description').notNull().default(''),
   instructions: text('instructions').notNull(), model: text('model').notNull().default('gemini-2.5-flash'),
+  reasoningEffort: text('reasoning_effort').notNull().default('none'),
   promptDefinition: text('prompt_definition').notNull().default(''), guardrails: jsonb('guardrails').$type<string[]>().notNull().default([]),
   promptVersion: integer('prompt_version').notNull().default(1), promptGeneratedAt: timestamp('prompt_generated_at', { withTimezone: true }),
+  templateKey: text('template_key'), templateVersion: integer('template_version'),
+  templateConfig: jsonb('template_config').$type<Record<string, unknown>>().notNull().default({}),
+  isPublic: boolean('is_public').notNull().default(false), publicId: uuid('public_id').notNull().defaultRandom(), publishedAt: timestamp('published_at', { withTimezone: true }),
   status: agentStatus('status').notNull().default('ready'), ...timestamps,
-}, (t) => [uniqueIndex('agents_workspace_slug_uq').on(t.workspaceId, t.slug), uniqueIndex('agents_lineage_uq').on(t.lineageId), index('agents_workspace_idx').on(t.workspaceId)]);
+}, (t) => [uniqueIndex('agents_workspace_slug_uq').on(t.workspaceId, t.slug), uniqueIndex('agents_lineage_uq').on(t.lineageId), uniqueIndex('agents_public_id_uq').on(t.publicId), index('agents_workspace_idx').on(t.workspaceId)]);
+
+export const qualificationSessions = pgTable('qualification_sessions', {
+  id: uuid('id').primaryKey().defaultRandom(), publicId: uuid('public_id').notNull().defaultRandom(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  agentId: uuid('agent_id').notNull().references(() => agents.id, { onDelete: 'cascade' }),
+  status: text('status').notNull().default('collecting'), currentQuestionKey: text('current_question_key').notNull().default('name'),
+  answers: jsonb('answers').$type<Record<string, string>>().notNull().default({}), score: integer('score').notNull().default(0),
+  outcome: text('outcome'), consentAcceptedAt: timestamp('consent_accepted_at', { withTimezone: true }).notNull(),
+  completedAt: timestamp('completed_at', { withTimezone: true }), ...timestamps,
+}, (t) => [uniqueIndex('qualification_sessions_public_id_uq').on(t.publicId), index('qualification_sessions_agent_idx').on(t.agentId, t.createdAt), index('qualification_sessions_workspace_idx').on(t.workspaceId, t.createdAt)]);
+
+export const qualificationEvents = pgTable('qualification_events', {
+  id: uuid('id').primaryKey().defaultRandom(), sessionId: uuid('session_id').notNull().references(() => qualificationSessions.id, { onDelete: 'cascade' }),
+  requestId: text('request_id').notNull(), questionKey: text('question_key').notNull(), answer: text('answer').notNull(),
+  result: jsonb('result').$type<Record<string, unknown>>().notNull(), ...timestamps,
+}, (t) => [uniqueIndex('qualification_events_session_request_uq').on(t.sessionId, t.requestId), index('qualification_events_session_idx').on(t.sessionId, t.createdAt)]);
+
+export const scheduledBookings = pgTable('scheduled_bookings', {
+  id: uuid('id').primaryKey().defaultRandom(), workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  agentId: uuid('agent_id').notNull().references(() => agents.id, { onDelete: 'cascade' }),
+  sessionId: uuid('session_id').notNull().references(() => qualificationSessions.id, { onDelete: 'cascade' }),
+  idempotencyKey: text('idempotency_key').notNull(), status: text('status').notNull().default('confirmed'),
+  startAt: timestamp('start_at', { withTimezone: true }).notNull(), endAt: timestamp('end_at', { withTimezone: true }).notNull(),
+  timeZone: text('time_zone').notNull().default('America/Sao_Paulo'), contactName: text('contact_name').notNull(),
+  contact: text('contact').notNull(), company: text('company').notNull(), notes: text('notes').notNull().default(''), ...timestamps,
+  externalProvider: text('external_provider'), externalEventId: text('external_event_id'), externalEventUrl: text('external_event_url'),
+  externalConferenceUrl: text('external_conference_url'), externalSyncStatus: text('external_sync_status').notNull().default('not_required'),
+  externalSyncError: text('external_sync_error'),
+}, (t) => [uniqueIndex('scheduled_bookings_agent_start_uq').on(t.agentId, t.startAt), uniqueIndex('scheduled_bookings_session_uq').on(t.sessionId), uniqueIndex('scheduled_bookings_workspace_idempotency_uq').on(t.workspaceId, t.idempotencyKey), index('scheduled_bookings_workspace_idx').on(t.workspaceId, t.createdAt)]);
+
+export const calendarConnections = pgTable('calendar_connections', {
+  id: uuid('id').primaryKey().defaultRandom(), workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  agentId: uuid('agent_id').notNull().references(() => agents.id, { onDelete: 'cascade' }),
+  provider: text('provider').notNull().default('google'), status: text('status').notNull().default('connected'),
+  calendarId: text('calendar_id').notNull(), calendarName: text('calendar_name').notNull(), calendarTimeZone: text('calendar_time_zone').notNull(),
+  encryptedRefreshToken: text('encrypted_refresh_token').notNull(), scopes: jsonb('scopes').$type<string[]>().notNull().default([]),
+  connectedByUserId: uuid('connected_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+  lastValidatedAt: timestamp('last_validated_at', { withTimezone: true }), tokenUpdatedAt: timestamp('token_updated_at', { withTimezone: true }).notNull().defaultNow(),
+  ...timestamps,
+}, (t) => [uniqueIndex('calendar_connections_agent_provider_uq').on(t.agentId, t.provider), index('calendar_connections_workspace_idx').on(t.workspaceId, t.createdAt)]);
 
 export const conversations = pgTable('conversations', {
   id: uuid('id').primaryKey().defaultRandom(), workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),

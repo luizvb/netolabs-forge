@@ -7,6 +7,7 @@ export type AgentDraft = {
   guardrails: string;
   instructions: string;
   model: string;
+  reasoningEffort: string;
 };
 
 export const PENDING_DRAFT_KEY = 'forge.pending-agent-draft';

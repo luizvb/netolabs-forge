@@ -43,6 +43,27 @@
       "when": 1783984718252,
       "tag": "0005_cultured_quentin_quire",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784133669745,
+      "tag": "0006_fair_thundra",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1784135726537,
+      "tag": "0007_green_marten_broadcloak",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784138091991,
+      "tag": "0008_glorious_carlie_cooper",
+      "breakpoints": true
     }
   ]
 }

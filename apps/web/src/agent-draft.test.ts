@@ -10,6 +10,7 @@ describe('guest agent draft', () => {
       guardrails: 'Nunca confirmar desconto sem aprovação',
       instructions: '',
       model: 'gemini-2.5-flash',
+      reasoningEffort: 'none',
     });
 
     expect(result.source).toBe('forge-template');

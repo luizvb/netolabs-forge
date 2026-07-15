@@ -20,7 +20,9 @@ export async function recordModelCall(input: {
   metadata?: Record<string, unknown>;
 }) {
   const usage = input.usage ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
-  const estimate = estimateModelCost(input.model, usage);
+  const estimate = usage.costUsd != null
+    ? { costUsd: usage.costUsd, pricing: { inputPerMillion: 0, outputPerMillion: 0, currency: 'USD' as const, source: 'OpenRouter response' } }
+    : estimateModelCost(input.model, usage);
   const [call] = await db.insert(modelCalls).values({
     workspaceId: input.workspaceId, agentId: input.agentId, conversationId: input.conversationId, evalRunId: input.evalRunId,
     kind: input.kind, model: input.model, status: input.status ?? 'succeeded', input: input.request.slice(0, 100_000), output: input.response?.slice(0, 200_000),

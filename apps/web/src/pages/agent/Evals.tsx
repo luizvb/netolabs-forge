@@ -18,7 +18,7 @@ export function Evals({ agentId }: { agentId: string }) {
   };
   const generate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setGenerating(true); setError(''); setNotice(''); const form = new FormData(event.currentTarget); const questions = String(form.get('questions') || '').split('\n').map((value) => value.trim()).filter(Boolean); const count = Number(form.get('count') || 6);
-    try { const result = await api<{ scenarios: Scenario[]; source: string; model: string }>(`/agents/${agentId}/evals/generate`, { method: 'POST', body: JSON.stringify({ questions, count }) }); setGenerateOpen(false); setNotice(`${result.scenarios.length} cenários gerados por ${result.source === 'google-adk' ? result.model : 'Forge template'}.`); await load(); }
+    try { const result = await api<{ scenarios: Scenario[]; source: string; model: string }>(`/agents/${agentId}/evals/generate`, { method: 'POST', body: JSON.stringify({ questions, count }) }); setGenerateOpen(false); setNotice(`${result.scenarios.length} cenários gerados por ${result.source === 'model-runtime' ? result.model : 'Forge template'}.`); await load(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Falha ao gerar cenários'); }
     finally { setGenerating(false); }
   };

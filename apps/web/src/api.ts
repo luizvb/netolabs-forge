@@ -1,6 +1,25 @@
 export type Agent = {
   id: string; name: string; description: string; instructions: string; model: string; status: string; createdAt: string; updatedAt: string;
   promptDefinition: string; guardrails: string[]; promptVersion: number; promptGeneratedAt?: string | null;
+  reasoningEffort: string; isPublic: boolean; publicId: string; publishedAt?: string | null;
+  templateKey?: string | null; templateVersion?: number | null; templateConfig?: Record<string, unknown>;
+};
+
+export type AgentTemplate = { key: string; version: number; name: string; description: string; outcome: string; segments: readonly string[]; capabilities: readonly string[]; status: string };
+export type QualificationConfig = { businessName: string; offerName: string; serviceArea: string; meetingTitle: string; minimumScore: number; timeZone: string; weekdays: number[]; startTime: string; endTime: string; meetingDurationMinutes: number; slotIntervalMinutes: number; bookingHorizonDays: number; minimumNoticeHours: number };
+export type QualificationQuestion = { key: string; label: string; type: 'text' | 'long_text' | 'choice'; options?: Array<{ value: string; label: string }> };
+export type AvailabilitySlot = { startAt: string; endAt: string; timeZone: string };
+export type QualificationTurn = { sessionId?: string; status: 'collecting' | 'qualified' | 'disqualified' | 'booked'; message: string; question?: QualificationQuestion | null; slots?: AvailabilitySlot[]; booking?: { id: string; startAt: string; endAt: string; timeZone: string; status: string; conferenceUrl?: string | null } };
+export type CalendarConnectionState = {
+  configured: boolean;
+  connection: null | { id: string; provider: 'google'; status: 'connected' | 'reauth_required'; calendarId: string; calendarName: string; calendarTimeZone: string; scopes: string[]; lastValidatedAt?: string | null; connectedAt: string };
+};
+export type GoogleCalendarItem = { id: string; summary: string; timeZone: string; primary: boolean; accessRole: string };
+export type QualificationOperations = {
+  agent: { id: string; name: string; status: string; isPublic: boolean }; config: QualificationConfig;
+  metrics: { sessions: number; completed: number; qualified: number; booked: number; qualificationRate: number; bookingRate: number };
+  leads: Array<{ id: string; publicId: string; status: string; score: number; outcome?: string | null; answers: Record<string, string>; createdAt: string; completedAt?: string | null }>;
+  bookings: Array<{ id: string; sessionId: string; status: string; startAt: string; endAt: string; timeZone: string; contactName: string; contact: string; company: string; notes: string; externalProvider?: string | null; externalEventUrl?: string | null; externalConferenceUrl?: string | null; externalSyncStatus: string; createdAt: string }>;
 };
 
 export type KnowledgeJob = {
@@ -53,6 +72,19 @@ export const api = async <T,>(path: string, init?: RequestInit): Promise<T> => {
     throw new Error(body.message ?? 'Não foi possível concluir a ação.');
   }
   return response.status === 204 ? undefined as T : response.json();
+};
+
+export class PublicApiError extends Error {
+  code?: string;
+  details?: Record<string, unknown>;
+  constructor(message: string, code?: string, details?: Record<string, unknown>) { super(message); this.code = code; this.details = details; }
+}
+
+export const publicApi = async <T,>(path: string, init?: RequestInit): Promise<T> => {
+  const response = await fetch(`/api${path}`, { ...init, headers: init?.body ? { 'content-type': 'application/json', ...(init.headers as Record<string, string> || {}) } : init?.headers });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new PublicApiError(body.message ?? 'Não foi possível concluir a ação.', body.code, body.details);
+  return body as T;
 };
 
 export const apiForm = async <T,>(path: string, body: FormData): Promise<T> => {

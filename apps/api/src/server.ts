@@ -17,6 +17,8 @@ import { generateEvalScenarios, generateOfficialPrompt } from './supervisor.js';
 import { createAgentWithCapacity, reserveAgentRequest, setAgentActivation, settleAgentRequest, shouldReleaseFailedRequest, workspaceUsage } from './entitlements.js';
 import { registerBillingRoutes } from './billing.js';
 import { registerBenchlineRoutes, syncBenchlineAfterAgentChange } from './benchline.js';
+import { registerQualificationRoutes } from './qualification-routes.js';
+import { registerCalendarRoutes } from './calendar-routes.js';
 
 const app = Fastify({ logger: true });
 await app.register(cookie);
@@ -138,14 +140,50 @@ app.post('/prompts/generate', async (request) => {
 app.get('/agents', async (request) => { const auth = await requireAuth(request); return db.select().from(agents).where(eq(agents.workspaceId, auth.workspaceId)).orderBy(desc(agents.createdAt)); });
 app.post('/agents', async (request, reply) => {
   const auth = await requireAuth(request);
-  const input = z.object({ name: z.string().min(2), description: z.string().max(240).default(''), instructions: z.string().min(20), model: z.string().default('gemini-2.5-flash'), promptDefinition: z.string().max(12_000).default(''), guardrails: z.array(z.string().max(500)).max(20).default([]), generatedPrompt: z.boolean().default(false) }).parse(request.body);
-  const result = await createAgentWithCapacity(auth.workspaceId, { name: input.name, description: input.description, instructions: input.instructions, model: input.model, promptDefinition: input.promptDefinition, guardrails: input.guardrails, promptGeneratedAt: input.generatedPrompt ? new Date() : null, slug: `${slugify(input.name)}-${crypto.randomUUID().slice(0, 6)}` });
+  const input = z.object({ name: z.string().min(2), description: z.string().max(240).default(''), instructions: z.string().min(20), model: z.string().min(3).max(120).default('google/gemini-2.5-flash'), reasoningEffort: z.enum(['none', 'minimal', 'low', 'medium', 'high']).default('none'), promptDefinition: z.string().max(12_000).default(''), guardrails: z.array(z.string().max(500)).max(20).default([]), generatedPrompt: z.boolean().default(false) }).parse(request.body);
+  const result = await createAgentWithCapacity(auth.workspaceId, { name: input.name, description: input.description, instructions: input.instructions, model: input.model, reasoningEffort: input.reasoningEffort, promptDefinition: input.promptDefinition, guardrails: input.guardrails, promptGeneratedAt: input.generatedPrompt ? new Date() : null, slug: `${slugify(input.name)}-${crypto.randomUUID().slice(0, 6)}` });
   await syncBenchlineAfterAgentChange(auth.workspaceId);
   return reply.code(201).send({ ...result.agent, storedInactive: result.storedInactive });
 });
 app.get('/agents/:id', async (request) => { const auth = await requireAuth(request); return ownedAgent(z.object({ id: z.string().uuid() }).parse(request.params).id, auth.workspaceId); });
-app.patch('/agents/:id/status', async (request) => { const auth = await requireAuth(request); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; const body = z.object({ active: z.boolean() }).parse(request.body); const result = await setAgentActivation(auth.workspaceId, id, body.active); await syncBenchlineAfterAgentChange(auth.workspaceId); return result; });
-app.delete('/agents/:id', async (request, reply) => { const auth = await requireAuth(request); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; await ownedAgent(id, auth.workspaceId); await db.update(agents).set({ status: 'disabled', updatedAt: new Date() }).where(and(eq(agents.id, id), eq(agents.workspaceId, auth.workspaceId))); await syncBenchlineAfterAgentChange(auth.workspaceId); return reply.code(204).send(); });
+app.patch('/agents/:id/status', async (request) => { const auth = await requireAuth(request); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; const body = z.object({ active: z.boolean() }).parse(request.body); const result = await setAgentActivation(auth.workspaceId, id, body.active); if (!body.active) await db.update(agents).set({ isPublic: false, publishedAt: null, updatedAt: new Date() }).where(and(eq(agents.id, id), eq(agents.workspaceId, auth.workspaceId))); await syncBenchlineAfterAgentChange(auth.workspaceId); return { ...result, ...(body.active ? {} : { isPublic: false, publishedAt: null }) }; });
+app.patch('/agents/:id/publication', async (request) => {
+  const auth = await requireAuth(request); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; const body = z.object({ published: z.boolean() }).parse(request.body);
+  const agent = await ownedAgent(id, auth.workspaceId);
+  if (body.published && agent.status === 'disabled') throw Object.assign(new Error('Ative o agente antes de publicá-lo.'), { statusCode: 409 });
+  const [updated] = await db.update(agents).set({ isPublic: body.published, publishedAt: body.published ? new Date() : null, updatedAt: new Date() }).where(and(eq(agents.id, id), eq(agents.workspaceId, auth.workspaceId))).returning();
+  return { isPublic: updated.isPublic, publicId: updated.publicId, publishedAt: updated.publishedAt, publicPath: `/a/${updated.publicId}` };
+});
+app.delete('/agents/:id', async (request, reply) => { const auth = await requireAuth(request); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; await ownedAgent(id, auth.workspaceId); await db.update(agents).set({ status: 'disabled', isPublic: false, publishedAt: null, updatedAt: new Date() }).where(and(eq(agents.id, id), eq(agents.workspaceId, auth.workspaceId))); await syncBenchlineAfterAgentChange(auth.workspaceId); return reply.code(204).send(); });
+
+app.get('/public/agents/:publicId', async (request) => {
+  const { publicId } = z.object({ publicId: z.string().uuid() }).parse(request.params);
+  const [agent] = await db.select({ publicId: agents.publicId, name: agents.name, description: agents.description, model: agents.model, reasoningEffort: agents.reasoningEffort, templateKey: agents.templateKey, templateVersion: agents.templateVersion, templateConfig: agents.templateConfig }).from(agents).where(and(eq(agents.publicId, publicId), eq(agents.isPublic, true), eq(agents.status, 'ready'))).limit(1);
+  if (!agent) throw Object.assign(new Error('Agente público não encontrado.'), { statusCode: 404 });
+  const config = agent.templateKey === 'qualification-scheduling' ? agent.templateConfig as Record<string, unknown> : null;
+  return { ...agent, templateConfig: undefined, publicTemplate: config ? { businessName: config.businessName, offerName: config.offerName, serviceArea: config.serviceArea, meetingTitle: config.meetingTitle, timeZone: config.timeZone } : null };
+});
+
+app.post('/public/agents/:publicId/chat', async (request) => {
+  const { publicId } = z.object({ publicId: z.string().uuid() }).parse(request.params);
+  const body = z.object({ message: z.string().min(1).max(4_000), requestId: z.string().min(8).max(120) }).parse(request.body);
+  const [agent] = await db.select().from(agents).where(and(eq(agents.publicId, publicId), eq(agents.isPublic, true), eq(agents.status, 'ready'))).limit(1);
+  if (!agent) throw Object.assign(new Error('Agente público não encontrado.'), { statusCode: 404 });
+  if (agent.templateKey === 'qualification-scheduling') throw Object.assign(new Error('Use o fluxo público de qualificação e agendamento deste agente.'), { statusCode: 409, code: 'QUALIFICATION_FLOW_REQUIRED' });
+  const reservation = await reserveAgentRequest({ workspaceId: agent.workspaceId, agentId: agent.id, idempotencyKey: `public:${body.requestId}` });
+  if (reservation.reused) throw Object.assign(new Error('Esta execução já foi recebida.'), { statusCode: 409, code: 'DUPLICATE_CHAT_REQUEST' });
+  const started = Date.now();
+  try {
+    const result = await runAgent(agent, body.message, await knowledgeFor(agent.id, body.message));
+    await settleAgentRequest(reservation.id, 'commit');
+    const call = await recordModelCall({ workspaceId: agent.workspaceId, agentId: agent.id, kind: 'public_chat', model: agent.model, request: body.message, response: result.text, usage: result.usage, latencyMs: Date.now() - started, metadata: { publicId } });
+    return { response: result.text, usage: result.usage, estimatedCostUsd: call.estimatedCostUsd, latencyMs: call.latencyMs };
+  } catch (error) {
+    await settleAgentRequest(reservation.id, shouldReleaseFailedRequest(error) ? 'release' : 'commit');
+    await recordModelCall({ workspaceId: agent.workspaceId, agentId: agent.id, kind: 'public_chat', model: agent.model, status: 'failed', request: body.message, latencyMs: Date.now() - started, error: error instanceof Error ? error.message : 'Public agent call failed', metadata: { publicId } });
+    throw error;
+  }
+});
 
 app.get('/agents/:id/knowledge', async (request) => {
   const auth = await requireAuth(request); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; await ownedAgent(id, auth.workspaceId);
@@ -362,6 +400,8 @@ app.get('/analytics/calls/:callId', async (request) => {
 
 registerBillingRoutes(app);
 registerBenchlineRoutes(app);
+registerQualificationRoutes(app);
+registerCalendarRoutes(app);
 
 app.setErrorHandler((error, request, reply) => {
   const err = error instanceof Error ? error : new Error('Unknown error');
