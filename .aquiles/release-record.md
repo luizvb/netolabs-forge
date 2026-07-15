@@ -73,5 +73,7 @@ Phase ceiling: `GIT_PUBLISH`
 
 ## Git publication
 
-- Intended commit: pending.
-- Intended remote SHA verification: pending.
+- Feature commit: `396cf0e61c330521b6935ab3e41b26c270fb2cfe` (`Add payment-backed Premium trial`).
+- Remote verification: `origin/main` matched the feature commit with zero divergence after push.
+- GitHub CI: passed — `https://github.com/luizvb/netolabs-forge/actions/runs/29440853378`.
+- Evidence-only follow-up uses `[skip ci]`; it changes no product code or database state.

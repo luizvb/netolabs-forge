@@ -97,10 +97,10 @@
 | Run ID | `forge-premium-trial-2026-07-15` |
 | Request class | `feature` |
 | Started | 2026-07-15T15:03:00-03:00 |
-| Last updated | 2026-07-15T15:16:00-03:00 |
+| Last updated | 2026-07-15T15:32:00-03:00 |
 | Status | `complete` |
-| Phase ceiling | `VERIFY` |
-| Current gate | `VERIFY_CONDITIONAL` |
+| Phase ceiling | `GIT_PUBLISH` |
+| Current gate | `GIT_PUBLISHED` |
 | Workspace | `/Users/luizneto/aquiles/netolabs-forge` |
 | Repository / branch | `luizvb/netolabs-forge` / `main` |
 
@@ -130,6 +130,8 @@
 - Post-migration verification: `trial_started_at` and `trial_ends_at` exist on `workspace_subscriptions` as nullable `timestamp with time zone`; the Drizzle journal contains 10 entries and `0009` is the latest.
 - Schema impact: additive metadata only; no existing subscription or usage row was rewritten by the migration.
 - Git target: authenticated GitHub account `luizvb`, public repository `luizvb/netolabs-forge`, default/current branch `main`, remote `origin`, initially synchronized at `aaf000a`.
+- Feature commit `396cf0e61c330521b6935ab3e41b26c270fb2cfe` was pushed to `origin/main`; local and remote SHAs matched with zero divergence.
+- GitHub CI run `29440853378` passed typecheck, tests, build and the supported production dependency audit.
 - Deploy state: unchanged. No Vercel deployment, environment mutation or Stripe provider mutation was authorized by this follow-up.
 
 ---
