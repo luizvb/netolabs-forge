@@ -7,7 +7,7 @@ Last updated: 2026-07-14
 
 ## Objective and outcome
 
-Implement the smallest local vertical slice that lets a Forge guest preserve an agent draft through Google/Neon Auth, safely provision a Forge identity, subscribe to a server-owned Stripe package, consume trial/paid chat allowance under atomic hard limits, and explicitly link paid workspaces to Benchline through an authenticated S2S contract.
+Implement the smallest local vertical slice that lets a Forge guest preserve an agent draft through Google/Neon Auth, safely provision a Forge identity and automatic first-plan trial, subscribe to a server-owned Stripe package after the trial, consume trial/paid allowance under atomic hard limits, and explicitly link entitled workspaces to Benchline through an authenticated S2S contract.
 
 Production mutations remain limited to the explicitly authorized incident fix and must keep legacy auth fail-closed. Tester owns independent readiness.
 
@@ -129,7 +129,7 @@ Non-goals: automatic overage/top-ups, silent SSO, live Stripe catalog or Neon se
 - Auth: `Authorization: Bearer <Neon access JWT>` is verified against configured issuer/JWKS and audience. Legacy cookie session is consulted only when Neon is not configured, in non-production, or an explicit local fallback flag permits it.
 - Catalog: browser sends only `solo | studio | scale`; server maps currency/price IDs. Solo=1 slot/1,500, Studio=3/4,500, Scale=10/15,000 and unlimited stored definitions.
 - Subscription snapshot: plan, status, current-period bounds, cancel-at-period-end, grace boundary and provider ordering timestamp are local. Active/grace access derives locally; checkout return is informational.
-- Usage: reserve before provider execution. Validation/pre-provider failure releases; provider-started failure commits. Trial is lifetime 30 per stable lineage, then 1,500 paid per active slot per Stripe billing period; no rollover or overage.
+- Usage: reserve before provider execution. Validation/pre-provider failure releases; provider-started failure commits. A new user's initial workspace receives exactly seven days and the full allowance of the first public commercial plan (currently Solo/1,500); expired workspaces require a paid subscription for product writes and executions. Paid counters follow the Stripe billing period with no rollover or overage.
 - S2S: signature covers method, path, timestamp, idempotency key and SHA-256 body hash. Requests outside configured skew or with replayed idempotency keys are rejected.
 - Sync payload is an explicit allowlist of workspace/account/agent/twin/consent fields and cannot contain knowledge, conversations or model calls.
 

@@ -297,3 +297,49 @@
 - QA status: `conditional_pass`; only the live provider flow requiring user-owned Google credentials remains an external gate.
 - Production state: unchanged; no deploy, environment update or production migration was authorized.
 - Git publication: complete on `luizvb/netolabs-forge:main`; CI passed.
+
+---
+
+# Aquiles delta: Forge automatic first-plan trial
+
+## Control metadata
+
+| Field | Value |
+| --- | --- |
+| Run ID | `forge-automatic-first-plan-trial-2026-07-15` |
+| Request class | `feature` |
+| Started | 2026-07-15T15:35:00-03:00 |
+| Last updated | 2026-07-15T16:16:00-03:00 |
+| Status | `in_progress` |
+| Phase ceiling | `VERIFY` |
+| Current gate | `CODER_VERIFIED_AWAITING_TESTER` |
+| Workspace | `/Users/luizneto/aquiles/netolabs-forge` |
+| Repository / branch | `luizvb/netolabs-forge` / `main` |
+| Source state | Clean `origin/main` before this isolated local feature diff |
+
+## Outcome and authorization
+
+- Outcome: a new user's initial workspace atomically receives the first public commercial plan (currently Solo) for exactly seven days, with full plan allowance and no card, Stripe customer or Stripe subscription.
+- At expiry, read-only history and safe reduction actions remain available; product writes and executions require verified paid access and otherwise return `402 SUBSCRIPTION_REQUIRED`.
+- Local edits and isolated local database verification are authorized by the feature request.
+- Commit, push, deploy, production migration, environment mutation and live Stripe mutation are not authorized and were not performed.
+
+## Verification ledger
+
+| ID | Method | Result |
+| --- | --- | --- |
+| V-TRIAL-001 | `pnpm typecheck` | Passed across database, web and API |
+| V-TRIAL-002 | `pnpm test` | 90/90 passed: API 64, web 26 |
+| V-TRIAL-003 | `pnpm build` | Production builds passed |
+| V-TRIAL-004 | Isolated PGlite/PostgreSQL + HTTP | Registration persisted Solo/trialing, exact 604,800,000 ms, 1,500 allowance and no Stripe identifiers |
+| V-TRIAL-005 | Isolated expiry HTTP | `trial_expired`; prompt/agent writes returned 402; history remained readable; safe disable succeeded |
+| V-TRIAL-006 | `pnpm audit:prod` | No known vulnerabilities |
+| V-TRIAL-007 | Aquiles privacy scan | 1,245 files, zero findings |
+| V-TRIAL-008 | `git diff --check` | Passed |
+
+## Migration, rollback and next owner
+
+- Schema migration: not applicable. Existing `workspace_subscriptions` columns from migration `0009` are sufficient; no production or user database was changed.
+- Rollback: revert this local feature diff. Automatic-trial rows are schema-compatible and should not be deleted without an explicit entitlement decision.
+- Coder status: `success`; independent QA status is intentionally not claimed.
+- Next owner: `TESTER` for independent acceptance/regression review.

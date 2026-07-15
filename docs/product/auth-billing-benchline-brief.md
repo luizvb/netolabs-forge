@@ -17,12 +17,13 @@ Recommendation: **GO** with a fixed-price, hard-limit MVP. Do not add automatic 
 - `E-002 observed`: Forge currently uses first-party email/password sessions; Neon Auth is not wired.
 - `E-003 observed`: Benchline already has workspaces, agents, Agent Twins, suites, findings, recommendations, API keys and its own direct-product billing plan.
 - `E-004 user_stated`: plans must cover 1, 3 and unlimited agents, with 1,500 requests per included active agent.
-- `E-008 user_stated`: every customer should receive 7 days of Premium with 50 runs and then be charged.
+- `E-008 superseded_by_E-009`: the earlier Checkout-backed 7-day/50-run trial contract is replaced by the automatic account-creation trial below.
+- `E-009 user_stated`: every new user must automatically receive the first available plan for 7 days without a card; after 7 days, product use requires a paid plan and payment method.
 - `E-005 user_stated`: a paid Forge workspace receives Benchline and free evals after explicit account-link consent.
 - `E-006 source_grounded`: Neon Auth for React/Vite supports Google OAuth, exposes a JWT access token and stores auth state in the Neon database.
 - `E-007 source_grounded`: Stripe subscriptions should use Checkout, signed webhooks as the entitlement source of truth and Customer Portal for self-service.
 - `A-001 inferred`: one request means one accepted Forge chat execution against one agent. Prompt generation, knowledge ingestion, failed validation and Benchline evals do not consume this allowance.
-- `A-002 superseded_by_D-TRIAL-002`: trial usage is 50 runs shared by the workspace and is available only during the 7-day Stripe trial.
+- `A-002 superseded_by_D-TRIAL-005`: the initial workspace receives the first public commercial plan's complete allowance during the 7-day local trial.
 - `A-003 unverified`: average production token cost per request. Prices are hypotheses until live cost distribution and conversion are measured.
 
 ## Product bet
@@ -52,7 +53,7 @@ Recommendation: **GO** with a fixed-price, hard-limit MVP. Do not add automatic 
 - Google sign-in with Neon Auth while preserving the guest draft path.
 - Internal Forge user/workspace provisioning from a verified Neon identity.
 - Fixed Stripe subscription Checkout, Customer Portal, signed/idempotent webhooks and plan snapshots.
-- Agent-slot enforcement, one 7-day/50-run Premium trial per workspace and monthly per-agent counters.
+- Agent-slot enforcement, one automatic 7-day first-plan trial for each new user's initial workspace and monthly per-agent counters.
 - Explicit Benchline terms acceptance, link/unlink, initial sync and re-sync.
 - Forge -> Benchline provisioning of workspace, agent and Agent Twin data.
 - Benchline -> Forge status read for sync, latest eval summary, findings count and recommendations count.
@@ -113,7 +114,7 @@ Recommendation: **GO** with a fixed-price, hard-limit MVP. Do not add automatic 
 - `AC-PLAN-001`: Checkout accepts only `solo|studio|scale`, uses the server-mapped Price ID, always collects payment and grants nothing until a verified webhook activates the 7-day trial or paid subscription.
 - `AC-PLAN-002`: replaying a signed subscription event changes entitlement once; an unsigned event changes nothing.
 - `AC-AGENT-001`: Solo rejects activation of a second agent, Studio accepts three and rejects the fourth, Scale stores an eleventh as disabled and offers contact.
-- `AC-USAGE-001`: a trialing workspace completes 50 shared chat runs; run 51 is blocked before provider execution, and an active paid period uses the monthly bucket rather than leftover trial runs.
+- `AC-USAGE-001`: a new Solo trial workspace completes up to the full 1,500-request plan allowance; further execution or post-expiry product writes are blocked before provider execution, and an active paid period uses the monthly bucket rather than leftover trial runs.
 - `AC-USAGE-002`: a paid Solo agent receives up to 1,500 requests in the billing period after trial, does not roll unused requests forward and renews exactly once.
 - `AC-USAGE-003`: two concurrent attempts against one remaining request produce one reservation and one controlled denial.
 - `AC-BENCH-001`: without checked consent, no Benchline request or consent record is created.
@@ -133,7 +134,7 @@ Recommendation: **GO** with a fixed-price, hard-limit MVP. Do not add automatic 
 ## Primary journeys and states
 
 1. Guest drafts an agent -> chooses publish -> Google OAuth -> Forge provisions identity/workspace -> draft publishes but execution remains gated until Checkout.
-2. Owner opens Billing -> selects a plan -> Stripe Checkout collects payment -> webhook activates 7 days of Premium and 50 shared runs -> Stripe charges the selected plan at the boundary unless canceled.
+2. Account creation atomically activates 7 days of Solo without Stripe or a card -> owner may subscribe at any time -> after expiry, Checkout collects a payment method and a verified webhook activates the paid plan with no second trial.
 3. Paid owner opens Evals -> reviews terms/scopes -> checks consent -> links Benchline -> agents sync -> status and latest evidence appear -> deep link opens Benchline for execution/details.
 4. Subscription ends -> webhook updates local state -> Forge sends/reconciles revocation -> new bundled evals stop, history remains readable.
 
@@ -144,7 +145,7 @@ Required UI states: loading, unauthenticated, trial active, trial exhausted, che
 - A past-due subscription receives a configurable 3-day grace period; no new monthly grant occurs until paid. After grace, paid requests and new bundled evals stop.
 - Upgrade applies when the verified Stripe subscription update is received. Downgrade applies at the next period. Excess active agents become disabled oldest-last-used first only after owner confirmation; the MVP may instead block downgrade in Portal and require in-app remediation.
 - Trial cannot be reset by deleting/recreating an agent or canceling/resubscribing. Engineering persists Stripe trial timestamps on the workspace subscription.
-- Historical free-run counters are reset once when the first verified Stripe trial starts, so existing workspaces receive the complete 50-run Premium allowance.
+- Existing users/workspaces are not backfilled. Only a newly created user's initial workspace receives the automatic trial; Checkout never resets trial counters or grants another trial.
 - Email is display/contact data, not the primary identity key. Neon `sub` is the external identity key.
 - Benchline remains unavailable without server configuration; Forge core authoring and chat continue normally.
 

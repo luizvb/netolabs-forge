@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { agents, and, desc, eq, evalScenarios, getDb, gte, qualificationEvents, qualificationSessions, scheduledBookings, sql } from '@forge/db';
 import { z } from 'zod';
 import { requireAuth } from './auth.js';
-import { createAgentWithCapacity } from './entitlements.js';
+import { createAgentWithCapacity, requireWorkspacePlanAccess } from './entitlements.js';
 import { syncBenchlineAfterAgentChange } from './benchline.js';
 import { applyGoogleAvailability, googleBusyForWindow, googleConnectionForAgent, markGoogleConnectionError } from './calendar-routes.js';
 import { createGoogleCalendarEvent, googleConferenceUrl, removeBusySlots } from './google-calendar.js';
@@ -47,6 +47,7 @@ async function qualificationAgent(agentId: string, workspaceId: string) {
 async function publicQualificationAgent(publicId: string) {
   const [agent] = await db.select().from(agents).where(and(eq(agents.publicId, publicId), eq(agents.isPublic, true), eq(agents.status, 'ready'), eq(agents.templateKey, QUALIFICATION_TEMPLATE_KEY), eq(agents.templateVersion, QUALIFICATION_TEMPLATE_VERSION))).limit(1);
   if (!agent) throw Object.assign(new Error('Agente de qualificação não encontrado.'), { statusCode: 404 });
+  await requireWorkspacePlanAccess(agent.workspaceId);
   return { agent, config: qualificationConfigSchema.parse(agent.templateConfig) };
 }
 
@@ -74,6 +75,7 @@ export function registerQualificationRoutes(app: FastifyInstance) {
 
   app.post('/agent-templates/qualification-scheduling/install', async (request, reply) => {
     const auth = await requireAuth(request);
+    await requireWorkspacePlanAccess(auth.workspaceId);
     const input = installSchema.parse(request.body);
     const config = qualificationConfigSchema.parse(input.config);
     const instructions = buildQualificationInstructions(config);

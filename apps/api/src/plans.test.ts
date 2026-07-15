@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PLAN_CATALOG, assertAgentCapacity, forgeCatalogPriceMismatch, hasPaidAccess, hasPaidRequestAllowance, planForSubscription, publicCatalog, stripePlanForPriceId, stripePriceId } from './plans.js';
+import { PLAN_CATALOG, assertAgentCapacity, firstCommercialPlan, forgeCatalogPriceMismatch, hasPaidAccess, hasPaidRequestAllowance, initialWorkspaceTrial, planForSubscription, publicCatalog, stripePlanForPriceId, stripePriceId } from './plans.js';
 
 describe('Forge plan policy', () => {
   it('fails closed on cross-product, mode and catalog Price mismatches', () => {
@@ -16,7 +16,19 @@ describe('Forge plan policy', () => {
     ]);
     expect(PLAN_CATALOG.scale.storedAgentLimit).toBeNull();
     expect(PLAN_CATALOG.trial.trialDurationDays).toBe(7);
-    expect(PLAN_CATALOG.trial.trialRequestsPerWorkspace).toBe(50);
+    expect(PLAN_CATALOG.solo.trialRequestsPerWorkspace).toBe(1_500);
+    expect(firstCommercialPlan().key).toBe('solo');
+  });
+
+  it('builds an exact seven-day no-provider trial for the first commercial plan', () => {
+    const startedAt = new Date('2026-07-15T15:00:00.000Z');
+    expect(initialWorkspaceTrial('workspace-1', startedAt)).toEqual({
+      workspaceId: 'workspace-1',
+      planKey: 'solo',
+      status: 'trialing',
+      trialStartedAt: startedAt,
+      trialEndsAt: new Date('2026-07-22T15:00:00.000Z'),
+    });
   });
 
   it('never accepts a browser supplied Stripe price id', () => {
@@ -36,6 +48,8 @@ describe('Forge plan policy', () => {
     expect(hasPaidAccess({ planKey: 'studio', status: 'trialing', trialEndsAt: new Date('2026-07-20T12:00:00Z') }, now)).toBe(true);
     expect(hasPaidAccess({ planKey: 'studio', status: 'trialing', trialEndsAt: new Date('2026-07-12T12:00:00Z') }, now)).toBe(false);
     expect(hasPaidRequestAllowance({ planKey: 'studio', status: 'trialing', trialEndsAt: new Date('2026-07-20T12:00:00Z') }, now)).toBe(false);
+    expect(hasPaidAccess({ planKey: 'solo', status: 'checkout_pending', trialEndsAt: new Date('2026-07-20T12:00:00Z') }, now)).toBe(true);
+    expect(hasPaidRequestAllowance({ planKey: 'solo', status: 'checkout_pending', trialEndsAt: new Date('2026-07-20T12:00:00Z') }, now)).toBe(false);
     expect(hasPaidRequestAllowance({ planKey: 'studio', status: 'active' }, now)).toBe(true);
     expect(hasPaidAccess({ planKey: 'studio', status: 'past_due', graceUntil: new Date('2026-07-14T12:00:00Z') }, now)).toBe(true);
     expect(planForSubscription({ planKey: 'studio', status: 'past_due', graceUntil: new Date('2026-07-12T12:00:00Z') }, now).key).toBe('trial');

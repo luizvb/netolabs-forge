@@ -6,7 +6,7 @@ import { waitUntil } from '@vercel/functions';
 import Fastify from 'fastify';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
-import { agents, and, conversations, desc, eq, evalBatches, evalRuns, evalScenarios, getDb, gte, inArray, knowledgeChunks, knowledgeJobs, knowledgeSources, memberships, modelCalls, sql, users, workspaces } from '@forge/db';
+import { agents, and, conversations, desc, eq, evalBatches, evalRuns, evalScenarios, getDb, gte, inArray, knowledgeChunks, knowledgeJobs, knowledgeSources, memberships, modelCalls, sql, users, workspaces, workspaceSubscriptions } from '@forge/db';
 import { assertLegacyAuthAllowed, createToken, hashPassword, requireAuth, verifyPassword } from './auth.js';
 import { judgeResponse, reviewPrompt, runAgent } from './adk.js';
 import { aggregateEvalRuns, buildEvalCsv, promptFingerprint, runDeterministicChecks } from './evals.js';
@@ -14,11 +14,12 @@ import { extractFileText } from './knowledge.js';
 import { drainKnowledgeJobs, enqueueKnowledgeJob } from './knowledge-worker.js';
 import { recordModelCall } from './observability.js';
 import { generateEvalScenarios, generateOfficialPrompt } from './supervisor.js';
-import { createAgentWithCapacity, reserveAgentRequest, setAgentActivation, settleAgentRequest, shouldReleaseFailedRequest, workspaceUsage } from './entitlements.js';
+import { createAgentWithCapacity, requireWorkspacePlanAccess, reserveAgentRequest, setAgentActivation, settleAgentRequest, shouldReleaseFailedRequest, workspaceUsage } from './entitlements.js';
 import { registerBillingRoutes } from './billing.js';
 import { registerBenchlineRoutes, syncBenchlineAfterAgentChange } from './benchline.js';
 import { registerQualificationRoutes } from './qualification-routes.js';
 import { registerCalendarRoutes } from './calendar-routes.js';
+import { initialWorkspaceTrial } from './plans.js';
 
 const app = Fastify({ logger: true });
 await app.register(cookie);
@@ -100,12 +101,15 @@ app.get('/health', async () => ({ ok: true }));
 app.post('/auth/register', async (request, reply) => {
   assertLegacyAuthAllowed();
   const input = credentials.extend({ name: z.string().min(2) }).parse(request.body);
-  const existing = await db.select({ id: users.id }).from(users).where(eq(users.email, input.email.toLowerCase())).limit(1);
-  if (existing.length) return reply.code(409).send({ message: 'Email already registered' });
   const result = await db.transaction(async (tx) => {
-    const [user] = await tx.insert(users).values({ email: input.email.toLowerCase(), name: input.name, passwordHash: await hashPassword(input.password) }).returning();
+    const email = input.email.toLowerCase();
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`forge-register:${email}`}))`);
+    const [existing] = await tx.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+    if (existing) throw Object.assign(new Error('Email already registered'), { statusCode: 409, code: 'EMAIL_ALREADY_REGISTERED' });
+    const [user] = await tx.insert(users).values({ email, name: input.name, passwordHash: await hashPassword(input.password) }).returning();
     const [workspace] = await tx.insert(workspaces).values({ name: `${input.name}'s workspace`, slug: `${slugify(input.name)}-${user.id.slice(0, 6)}` }).returning();
     await tx.insert(memberships).values({ userId: user.id, workspaceId: workspace.id });
+    await tx.insert(workspaceSubscriptions).values(initialWorkspaceTrial(workspace.id));
     return { user, workspace };
   });
   const token = await createToken(result.user.id, result.workspace.id);
@@ -125,6 +129,7 @@ app.get('/auth/me', async (request) => { const auth = await requireAuth(request)
 
 app.post('/prompts/generate', async (request) => {
   const auth = await requireAuth(request);
+  await requireWorkspacePlanAccess(auth.workspaceId);
   const input = z.object({ name: z.string().max(120).optional(), definition: z.string().min(20).max(12_000), guardrails: z.array(z.string().min(3).max(500)).max(20).optional(), tone: z.string().max(500).optional(), escalation: z.string().max(1_000).optional(), model: z.string().max(120).optional() }).parse(request.body);
   const started = Date.now();
   try {
@@ -149,6 +154,7 @@ app.get('/agents/:id', async (request) => { const auth = await requireAuth(reque
 app.patch('/agents/:id/status', async (request) => { const auth = await requireAuth(request); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; const body = z.object({ active: z.boolean() }).parse(request.body); const result = await setAgentActivation(auth.workspaceId, id, body.active); if (!body.active) await db.update(agents).set({ isPublic: false, publishedAt: null, updatedAt: new Date() }).where(and(eq(agents.id, id), eq(agents.workspaceId, auth.workspaceId))); await syncBenchlineAfterAgentChange(auth.workspaceId); return { ...result, ...(body.active ? {} : { isPublic: false, publishedAt: null }) }; });
 app.patch('/agents/:id/publication', async (request) => {
   const auth = await requireAuth(request); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; const body = z.object({ published: z.boolean() }).parse(request.body);
+  if (body.published) await requireWorkspacePlanAccess(auth.workspaceId);
   const agent = await ownedAgent(id, auth.workspaceId);
   if (body.published && agent.status === 'disabled') throw Object.assign(new Error('Ative o agente antes de publicá-lo.'), { statusCode: 409 });
   const [updated] = await db.update(agents).set({ isPublic: body.published, publishedAt: body.published ? new Date() : null, updatedAt: new Date() }).where(and(eq(agents.id, id), eq(agents.workspaceId, auth.workspaceId))).returning();
@@ -194,12 +200,12 @@ app.get('/agents/:id/knowledge', async (request) => {
   return sources.map((source) => ({ ...source, latestJob: jobs.find((job) => job.sourceId === source.id) ?? null }));
 });
 app.post('/agents/:id/knowledge', async (request, reply) => {
-  const auth = await requireAuth(request); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; await ownedAgent(id, auth.workspaceId);
+  const auth = await requireAuth(request); await requireWorkspacePlanAccess(auth.workspaceId); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; await ownedAgent(id, auth.workspaceId);
   const input = z.object({ type: z.enum(['text', 'url']), title: z.string().min(2), content: z.string().optional(), url: z.string().url().optional() }).refine((x) => x.type === 'text' ? Boolean(x.content) : Boolean(x.url)).parse(request.body);
   return reply.code(202).send(await createKnowledgeSource(auth.workspaceId, id, { type: input.type, title: input.title, url: input.url, rawText: input.content }));
 });
 app.post('/agents/:id/knowledge/upload', async (request, reply) => {
-  const auth = await requireAuth(request); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; await ownedAgent(id, auth.workspaceId);
+  const auth = await requireAuth(request); await requireWorkspacePlanAccess(auth.workspaceId); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; await ownedAgent(id, auth.workspaceId);
   const file = await request.file(); if (!file) throw Object.assign(new Error('A file is required'), { statusCode: 400 });
   const buffer = await file.toBuffer(); const rawText = await extractFileText(file.filename, file.mimetype, buffer);
   return reply.code(202).send(await createKnowledgeSource(auth.workspaceId, id, { type: 'file', title: file.filename, rawText, metadata: { filename: file.filename, mimetype: file.mimetype, bytes: buffer.byteLength } }));
@@ -215,11 +221,12 @@ app.get('/agents/:id/knowledge/:sourceId', async (request) => {
 app.patch('/agents/:id/knowledge/:sourceId', async (request) => {
   const auth = await requireAuth(request); const p = z.object({ id: z.string().uuid(), sourceId: z.string().uuid() }).parse(request.params); await ownedSource(p.sourceId, p.id, auth.workspaceId);
   const input = z.object({ active: z.boolean() }).parse(request.body);
+  if (input.active) await requireWorkspacePlanAccess(auth.workspaceId);
   const [source] = await db.update(knowledgeSources).set({ active: input.active, updatedAt: new Date() }).where(and(eq(knowledgeSources.id, p.sourceId), eq(knowledgeSources.agentId, p.id))).returning();
   return source;
 });
 app.post('/agents/:id/knowledge/:sourceId/reprocess', async (request, reply) => {
-  const auth = await requireAuth(request); const p = z.object({ id: z.string().uuid(), sourceId: z.string().uuid() }).parse(request.params); const source = await ownedSource(p.sourceId, p.id, auth.workspaceId);
+  const auth = await requireAuth(request); await requireWorkspacePlanAccess(auth.workspaceId); const p = z.object({ id: z.string().uuid(), sourceId: z.string().uuid() }).parse(request.params); const source = await ownedSource(p.sourceId, p.id, auth.workspaceId);
   await db.update(knowledgeSources).set({ version: sql`${knowledgeSources.version} + 1`, status: 'processing', error: null, updatedAt: new Date() }).where(eq(knowledgeSources.id, source.id));
   const job = await enqueueKnowledgeJob({ workspaceId: auth.workspaceId, agentId: p.id, sourceId: source.id });
   scheduleKnowledgeJob(job.id);
@@ -264,7 +271,7 @@ app.get('/usage', async (request) => { const auth = await requireAuth(request); 
 
 app.get('/agents/:id/evals', async (request) => { const auth = await requireAuth(request); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; await ownedAgent(id, auth.workspaceId); const scenarios = await db.select().from(evalScenarios).where(eq(evalScenarios.agentId, id)).orderBy(desc(evalScenarios.createdAt)); const runs = scenarios.length ? await db.select().from(evalRuns).where(inArray(evalRuns.scenarioId, scenarios.map((x) => x.id))).orderBy(desc(evalRuns.createdAt)) : []; return scenarios.map((scenario) => ({ ...scenario, latest: runs.find((run) => run.scenarioId === scenario.id) ?? null })); });
 app.post('/agents/:id/evals/generate', async (request, reply) => {
-  const auth = await requireAuth(request); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; const agent = await ownedAgent(id, auth.workspaceId);
+  const auth = await requireAuth(request); await requireWorkspacePlanAccess(auth.workspaceId); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; const agent = await ownedAgent(id, auth.workspaceId);
   const input = z.object({ questions: z.array(z.string().min(3).max(2_000)).max(20).default([]), count: z.number().int().min(3).max(12).default(6), model: z.string().max(120).optional() }).parse(request.body ?? {});
   const sources = await db.select({ title: knowledgeSources.title, rawText: knowledgeSources.rawText }).from(knowledgeSources).where(and(eq(knowledgeSources.agentId, id), eq(knowledgeSources.active, true), eq(knowledgeSources.status, 'ready'))).orderBy(desc(knowledgeSources.updatedAt)).limit(20);
   const knowledge = sources.map((source) => `Source: ${source.title}\n${source.rawText.slice(0, 4_000)}`).join('\n\n').slice(0, 24_000);
@@ -280,14 +287,14 @@ app.post('/agents/:id/evals/generate', async (request, reply) => {
   }
 });
 app.post('/agents/:id/evals', async (request, reply) => {
-  const auth = await requireAuth(request); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; await ownedAgent(id, auth.workspaceId);
+  const auth = await requireAuth(request); await requireWorkspacePlanAccess(auth.workspaceId); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; await ownedAgent(id, auth.workspaceId);
   const assertions = z.object({ mustContain: z.array(z.string().min(1)).max(10).optional(), mustNotContain: z.array(z.string().min(1)).max(10).optional(), maxLatencyMs: z.number().int().positive().optional(), minLength: z.number().int().positive().optional() }).default({});
   const input = z.object({ name: z.string().min(2), input: z.string().min(2), expectedBehavior: z.string().min(5), category: z.string().default('quality'), weight: z.number().positive().default(1), assertions }).parse(request.body);
   const [scenario] = await db.insert(evalScenarios).values({ ...input, agentId: id }).returning(); return reply.code(201).send(scenario);
 });
 app.delete('/agents/:id/evals/:scenarioId', async (request, reply) => { const auth = await requireAuth(request); const p = z.object({ id: z.string().uuid(), scenarioId: z.string().uuid() }).parse(request.params); await ownedAgent(p.id, auth.workspaceId); await db.delete(evalScenarios).where(and(eq(evalScenarios.id, p.scenarioId), eq(evalScenarios.agentId, p.id))); return reply.code(204).send(); });
 app.post('/agents/:id/evals/run', async (request, reply) => {
-  const auth = await requireAuth(request); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; const agent = await ownedAgent(id, auth.workspaceId);
+  const auth = await requireAuth(request); await requireWorkspacePlanAccess(auth.workspaceId); const id = z.object({ id: z.string().uuid() }).parse(request.params).id; const agent = await ownedAgent(id, auth.workspaceId);
   const body = z.object({ scenarioId: z.string().uuid().optional(), supervisorModel: z.string().min(3).max(120).default(process.env.EVAL_SUPERVISOR_MODEL ?? 'gemini-2.5-pro') }).parse(request.body ?? {});
   if (body.supervisorModel === agent.model) return reply.code(400).send({ message: 'Candidate and supervisor models must be different' });
   const conditions = [eq(evalScenarios.agentId, id), eq(evalScenarios.active, true)]; if (body.scenarioId) conditions.push(eq(evalScenarios.id, body.scenarioId));
@@ -308,7 +315,7 @@ app.get('/agents/:id/eval-runs/:batchId', async (request) => {
 });
 app.post('/agents/:id/eval-runs/:batchId/cancel', async (request) => { const auth = await requireAuth(request); const p = z.object({ id: z.string().uuid(), batchId: z.string().uuid() }).parse(request.params); await ownedAgent(p.id, auth.workspaceId); await db.update(evalBatches).set({ status: 'canceling', updatedAt: new Date() }).where(and(eq(evalBatches.id, p.batchId), eq(evalBatches.agentId, p.id))); return { ok: true }; });
 app.post('/agents/:id/eval-runs/:batchId/improve-prompt', async (request) => {
-  const auth = await requireAuth(request); const p = z.object({ id: z.string().uuid(), batchId: z.string().uuid() }).parse(request.params); const agent = await ownedAgent(p.id, auth.workspaceId);
+  const auth = await requireAuth(request); await requireWorkspacePlanAccess(auth.workspaceId); const p = z.object({ id: z.string().uuid(), batchId: z.string().uuid() }).parse(request.params); const agent = await ownedAgent(p.id, auth.workspaceId);
   const [batch] = await db.select().from(evalBatches).where(and(eq(evalBatches.id, p.batchId), eq(evalBatches.agentId, p.id))).limit(1); if (!batch) throw Object.assign(new Error('Eval run not found'), { statusCode: 404 });
   const rows = await db.select({ run: evalRuns, scenario: evalScenarios }).from(evalRuns).innerJoin(evalScenarios, eq(evalScenarios.id, evalRuns.scenarioId)).where(eq(evalRuns.batchId, batch.id));
   const cases = rows.filter(({ run }) => ['passed', 'failed'].includes(run.status)).map(({ run, scenario }) => ({ input: scenario.input, expected: scenario.expectedBehavior, response: run.response ?? '', score: run.score ?? 0, reasoning: run.reasoning ?? '' }));

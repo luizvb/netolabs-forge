@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activeAgentIdsToDisable, normalizedBillingState, premiumTrialCheckoutOptions, revocationWorkspaceForDelivery, shouldApplySubscriptionSnapshot, shouldResetTrialUsage, stripeSubscriptionCancellationScheduled, subscriptionEventForRetry, subscriptionIdFromInvoice, subscriptionSnapshotFromStripe, subscriptionWorkspaceLockKey } from './billing.js';
+import { activeAgentIdsToDisable, normalizedBillingState, paidCheckoutOptions, revocationWorkspaceForDelivery, shouldApplySubscriptionSnapshot, shouldResetTrialUsage, stripeSubscriptionCancellationScheduled, subscriptionEventForRetry, subscriptionIdFromInvoice, subscriptionSnapshotFromStripe, subscriptionWorkspaceLockKey } from './billing.js';
 
 describe('Stripe entitlement snapshots', () => {
   it('derives a paid snapshot only from server-verified subscription metadata', () => {
@@ -9,12 +9,8 @@ describe('Stripe entitlement snapshots', () => {
     expect(snapshot.trialEndsAt?.toISOString()).toBe('2023-11-21T22:13:20.000Z');
   });
 
-  it('offers one seven-day trial and always collects payment before it starts', () => {
-    expect(premiumTrialCheckoutOptions(null)).toEqual({
-      paymentMethodCollection: 'always',
-      subscriptionTrial: { trial_period_days: 7, trial_settings: { end_behavior: { missing_payment_method: 'cancel' } } },
-    });
-    expect(premiumTrialCheckoutOptions(new Date('2026-07-15T12:00:00Z'))).toEqual({ paymentMethodCollection: 'always', subscriptionTrial: {} });
+  it('always collects payment and never starts another trial in Checkout', () => {
+    expect(paidCheckoutOptions()).toEqual({ paymentMethodCollection: 'always', subscriptionTrial: {} });
   });
 
   it('preserves the one-time trial marker on a later subscription without trial fields', () => {
@@ -72,6 +68,7 @@ describe('Stripe entitlement snapshots', () => {
     expect(normalizedBillingState({ status: 'past_due', graceUntil: new Date('2026-07-15T12:00:00Z') }, now)).toBe('past_due_grace');
     expect(normalizedBillingState({ status: 'past_due', graceUntil: new Date('2026-07-13T12:00:00Z') }, now)).toBe('past_due_blocked');
     expect(normalizedBillingState({ status: 'canceled' }, now)).toBe('canceled');
+    expect(normalizedBillingState({ status: 'trialing', trialEndsAt: new Date('2026-07-14T12:00:00Z') }, now)).toBe('trial_expired');
   });
 
   it('normalizes flexible billing cancel_at as a scheduled cancellation', () => {

@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { billingLifecyclePresentation, forgeCheckoutBody, forgePriceLabel } from './Billing';
 
 const base = {
-  plan: { key: 'solo', name: 'Solo', prices: { brl: 149, usd: 29 }, activeAgentLimit: 1, storedAgentLimit: 1, requestsPerActiveAgent: 1_500, totalIncludedRequests: 1_500, trialDurationDays: 7, trialRequestsPerWorkspace: 50, benchlineIncluded: true },
+  plan: { key: 'solo', name: 'Solo', prices: { brl: 149, usd: 29 }, activeAgentLimit: 1, storedAgentLimit: 1, requestsPerActiveAgent: 1_500, totalIncludedRequests: 1_500, trialDurationDays: 7, trialRequestsPerWorkspace: 1_500, benchlineIncluded: true },
   subscription: { status: 'active', cancelAtPeriodEnd: false, currentPeriodEnd: '2026-08-14T00:00:00Z', graceUntil: null },
+  trial: { used: 0, reserved: 0, limit: 1_500, eligible: false },
 } as const;
 
 describe('Forge billing lifecycle presentation', () => {
@@ -11,10 +12,16 @@ describe('Forge billing lifecycle presentation', () => {
     expect(billingLifecyclePresentation({ ...base, normalizedState: 'active' }, 'pt-BR')).toMatchObject({ title: 'Pagamento confirmado', detail: expect.stringContaining('Renova em') });
   });
 
-  it('explains the automatic charge while the Premium trial is active', () => {
+  it('explains the automatic no-card trial and required subscription afterward', () => {
     const presentation = billingLifecyclePresentation({ ...base, normalizedState: 'trialing', subscription: { ...base.subscription, status: 'trialing', trialEndsAt: '2026-07-22T00:00:00Z' } }, 'pt-BR');
-    expect(presentation).toMatchObject({ title: 'Premium em teste', detail: expect.stringContaining('50 runs') });
-    expect(presentation?.detail).toContain('cobrado automaticamente');
+    expect(presentation).toMatchObject({ title: 'Solo em teste', detail: expect.stringContaining('1.500 execuções') });
+    expect(presentation?.detail).toContain('sem cartão');
+    expect(presentation?.detail).toContain('forma de pagamento');
+  });
+
+  it('shows an explicit expired state that preserves data and requires payment', () => {
+    const presentation = billingLifecyclePresentation({ ...base, normalizedState: 'trial_expired' }, 'pt-BR');
+    expect(presentation).toMatchObject({ title: 'Seu teste de 7 dias terminou', detail: expect.stringContaining('forma de pagamento') });
   });
 
   it('uses access-until copy for scheduled cancellation', () => {

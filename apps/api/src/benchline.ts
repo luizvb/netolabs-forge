@@ -44,7 +44,7 @@ async function ownerAuth(request: FastifyRequest) {
 async function requireForgeBundle(workspaceId: string) {
   const db = getDb();
   const [subscription] = await db.select().from(workspaceSubscriptions).where(eq(workspaceSubscriptions.workspaceId, workspaceId)).limit(1);
-  if (!hasPaidAccess(subscription ?? {})) throw Object.assign(new Error('Benchline is included after a paid Forge subscription is active.'), { statusCode: 402, code: 'FORGE_SUBSCRIPTION_REQUIRED' });
+  if (!hasPaidAccess(subscription ?? {})) throw Object.assign(new Error('Benchline requires an active Forge trial or paid subscription.'), { statusCode: 402, code: 'FORGE_SUBSCRIPTION_REQUIRED' });
   return subscription!;
 }
 

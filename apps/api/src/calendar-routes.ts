@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { agents, and, calendarConnections, eq, getDb } from '@forge/db';
 import { z } from 'zod';
 import { requireAuth } from './auth.js';
+import { requireWorkspacePlanAccess } from './entitlements.js';
 import {
   GoogleCalendarError,
   GOOGLE_CALENDAR_SCOPES,
@@ -108,6 +109,7 @@ export function registerCalendarRoutes(app: FastifyInstance) {
 
   app.post('/agents/:id/calendar-connection/google/authorize', async (request) => {
     const auth = await requireAuth(request);
+    await requireWorkspacePlanAccess(auth.workspaceId);
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     await ownedQualificationAgent(id, auth.workspaceId);
     const state = createGoogleOAuthState({ agentId: id, workspaceId: auth.workspaceId, userId: auth.userId });
@@ -120,6 +122,7 @@ export function registerCalendarRoutes(app: FastifyInstance) {
     try {
       const state = verifyGoogleOAuthState(query.state);
       agentId = state.agentId;
+      await requireWorkspacePlanAccess(state.workspaceId);
       await ownedQualificationAgent(state.agentId, state.workspaceId);
       if (query.error || !query.code) return reply.redirect(webRedirect(state.agentId, 'denied'));
       const tokens = await exchangeGoogleAuthorizationCode(query.code);
@@ -167,6 +170,7 @@ export function registerCalendarRoutes(app: FastifyInstance) {
 
   app.get('/agents/:id/calendar-connection/calendars', async (request) => {
     const auth = await requireAuth(request);
+    await requireWorkspacePlanAccess(auth.workspaceId);
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     await ownedQualificationAgent(id, auth.workspaceId);
     const connection = await googleConnectionForAgent(id, auth.workspaceId);
@@ -176,6 +180,7 @@ export function registerCalendarRoutes(app: FastifyInstance) {
 
   app.patch('/agents/:id/calendar-connection', async (request) => {
     const auth = await requireAuth(request);
+    await requireWorkspacePlanAccess(auth.workspaceId);
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const body = z.object({ calendarId: z.string().min(1).max(1_024) }).parse(request.body);
     await ownedQualificationAgent(id, auth.workspaceId);

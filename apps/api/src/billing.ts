@@ -4,7 +4,7 @@ import Stripe from 'stripe';
 import { agentUsageCounters, agents, and, asc, benchlineConnections, eq, getDb, inArray, memberships, sql, stripeEvents, users, workspaceSubscriptions } from '@forge/db';
 import { z } from 'zod';
 import { requireAuth } from './auth.js';
-import { PREMIUM_TRIAL_DURATION_DAYS, forgeCatalogPriceMismatch, hasPaidAccess, isPaidPlanKey, planForSubscription, publicCatalog, stripePlanForPriceId, stripePriceId } from './plans.js';
+import { forgeCatalogPriceMismatch, hasPaidAccess, isPaidPlanKey, planForSubscription, publicCatalog, stripePlanForPriceId, stripePriceId } from './plans.js';
 import { workspaceUsage } from './entitlements.js';
 import { revokeBenchlineBundle } from './benchline.js';
 
@@ -61,22 +61,17 @@ export function stripeSubscriptionCancellationScheduled(
       && subscription.cancel_at > providerCreatedAt);
 }
 
-export function normalizedBillingState(input?: { status?: string | null; cancelAtPeriodEnd?: boolean | null; graceUntil?: Date | null }, now = new Date()) {
+export function normalizedBillingState(input?: { status?: string | null; cancelAtPeriodEnd?: boolean | null; graceUntil?: Date | null; trialEndsAt?: Date | null }, now = new Date()) {
   if (!input?.status || input.status === 'trial_eligible') return 'free';
+  if (input.status === 'trialing' && input.trialEndsAt && input.trialEndsAt <= now) return 'trial_expired';
   if (input.cancelAtPeriodEnd && ['active', 'trialing'].includes(input.status)) return 'cancel_scheduled';
   if (input.status === 'past_due') return input.graceUntil && input.graceUntil > now ? 'past_due_grace' : 'past_due_blocked';
   if (['active', 'trialing', 'checkout_pending', 'paused', 'canceled', 'incomplete'].includes(input.status)) return input.status;
   return input.status === 'unpaid' ? 'past_due_blocked' : 'reconciliation_required';
 }
 
-export function premiumTrialCheckoutOptions(trialStartedAt?: Date | null) {
-  return {
-    paymentMethodCollection: 'always' as const,
-    subscriptionTrial: trialStartedAt ? {} : {
-      trial_period_days: PREMIUM_TRIAL_DURATION_DAYS,
-      trial_settings: { end_behavior: { missing_payment_method: 'cancel' as const } },
-    },
-  };
+export function paidCheckoutOptions() {
+  return { paymentMethodCollection: 'always' as const, subscriptionTrial: {} };
 }
 
 export function subscriptionSnapshotFromStripe(subscription: StripeSubscriptionShape, eventCreated: number, fallback?: { workspaceId?: string; planKey?: string; trialStartedAt?: Date | null; trialEndsAt?: Date | null }, env: NodeJS.ProcessEnv = process.env) {
@@ -180,20 +175,20 @@ export function registerBillingRoutes(app: FastifyInstance) {
       }
       const previousStatus = subscription?.status ?? 'trial_eligible';
       await tx.insert(workspaceSubscriptions).values({ workspaceId: auth.workspaceId, stripeCustomerId: customerId, status: 'checkout_pending' }).onConflictDoUpdate({ target: workspaceSubscriptions.workspaceId, set: { stripeCustomerId: customerId, status: 'checkout_pending', updatedAt: now } });
-      return { customerId, previousStatus, trialStartedAt: subscription?.trialStartedAt ?? null };
+      return { customerId, previousStatus };
     });
     const origin = (process.env.WEB_ORIGIN ?? 'http://localhost:5173').replace(/\/$/, '');
     try {
       const lease = Math.floor(now.getTime() / (40 * 60_000));
-      const premiumTrial = premiumTrialCheckoutOptions(checkoutState.trialStartedAt);
+      const paidCheckout = paidCheckoutOptions();
       const session = await stripe.checkout.sessions.create({
         mode: 'subscription', customer: checkoutState.customerId, client_reference_id: auth.workspaceId,
         line_items: [{ price: configuredPriceId, quantity: 1 }],
-        payment_method_collection: premiumTrial.paymentMethodCollection,
+        payment_method_collection: paidCheckout.paymentMethodCollection,
         success_url: `${origin}/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${origin}/billing?checkout=canceled`, allow_promotion_codes: true,
-        metadata: { workspaceId: auth.workspaceId, planKey: input.plan, ownerBrand: 'netolabs', productKey: 'forge', premiumTrial: '7d-50-runs' },
-        subscription_data: { metadata: { workspaceId: auth.workspaceId, planKey: input.plan, ownerBrand: 'netolabs', productKey: 'forge', premiumTrial: '7d-50-runs' }, ...premiumTrial.subscriptionTrial },
+        metadata: { workspaceId: auth.workspaceId, planKey: input.plan, ownerBrand: 'netolabs', productKey: 'forge' },
+        subscription_data: { metadata: { workspaceId: auth.workspaceId, planKey: input.plan, ownerBrand: 'netolabs', productKey: 'forge' }, ...paidCheckout.subscriptionTrial },
       }, { idempotencyKey: `forge-checkout-${auth.workspaceId}-${input.plan}-${input.currency}-${lease}` });
       return { url: session.url };
     } catch (error) {

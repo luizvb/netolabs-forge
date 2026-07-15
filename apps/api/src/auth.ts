@@ -2,7 +2,8 @@ import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:cry
 import { promisify } from 'node:util';
 import type { FastifyRequest } from 'fastify';
 import { createRemoteJWKSet, SignJWT, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
-import { and, eq, externalIdentities, getDb, memberships, users, workspaces } from '@forge/db';
+import { and, eq, externalIdentities, getDb, memberships, sql, users, workspaces, workspaceSubscriptions } from '@forge/db';
+import { initialWorkspaceTrial } from './plans.js';
 
 const scrypt = promisify(scryptCallback);
 const secret = () => {
@@ -67,18 +68,20 @@ async function provisionNeonIdentity(claims: ReturnType<typeof neonIdentityClaim
     .where(and(eq(externalIdentities.issuer, claims.issuer), eq(externalIdentities.subject, claims.subject))).limit(1);
   if (existing) return existing;
 
-  const [emailOwner] = await db.select({ id: users.id }).from(users).where(eq(users.email, claims.email)).limit(1);
-  if (emailOwner) throw Object.assign(new Error('Este email já pertence a outra forma de acesso. Entre com ela para vincular o Google com segurança.'), { statusCode: 409, code: 'ACCOUNT_LINK_REQUIRED' });
-
   return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`forge-identity:${claims.issuer}:${claims.subject}`}))`);
     const [raced] = await tx.select({ userId: externalIdentities.userId, workspaceId: memberships.workspaceId }).from(externalIdentities)
       .innerJoin(memberships, eq(memberships.userId, externalIdentities.userId))
       .where(and(eq(externalIdentities.issuer, claims.issuer), eq(externalIdentities.subject, claims.subject))).limit(1);
     if (raced) return raced;
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`forge-email:${claims.email}`}))`);
+    const [emailOwner] = await tx.select({ id: users.id }).from(users).where(eq(users.email, claims.email)).limit(1);
+    if (emailOwner) throw Object.assign(new Error('Este email já pertence a outra forma de acesso. Entre com ela para vincular o Google com segurança.'), { statusCode: 409, code: 'ACCOUNT_LINK_REQUIRED' });
     const [user] = await tx.insert(users).values({ email: claims.email, name: claims.name, passwordHash: null }).returning();
     const [workspace] = await tx.insert(workspaces).values({ name: `${claims.name} workspace`, slug: `${slugify(claims.name)}-${user.id.slice(0, 8)}` }).returning();
     await tx.insert(memberships).values({ userId: user.id, workspaceId: workspace.id, role: 'owner' });
     await tx.insert(externalIdentities).values({ userId: user.id, provider: 'neon_google', issuer: claims.issuer, subject: claims.subject, emailAtLink: claims.email });
+    await tx.insert(workspaceSubscriptions).values(initialWorkspaceTrial(workspace.id));
     return { userId: user.id, workspaceId: workspace.id };
   });
 }
